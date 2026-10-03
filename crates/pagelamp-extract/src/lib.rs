@@ -108,6 +108,13 @@ pub fn extract_html(html: &str) -> Vec<Segment> {
     finish_segments(html::segments(html), Limits::DEFAULT.max_text_bytes)
 }
 
+/// Whether a local file is a document the operating system's default app may open (a shell's
+/// "Open"): a format this crate reads that is not code, a script or HTML, whose MIME hint
+/// (if any) agrees with its extension.
+pub fn opens_as_document(path: &Path, mime_hint: Option<&str>) -> bool {
+    format::opens_as_document(path, mime_hint)
+}
+
 /// Whether `extract_file` would attempt this file (by extension / mime).
 pub fn is_supported(path: &Path, mime_hint: Option<&str>) -> bool {
     FileFormat::detect(path, mime_hint).is_some()

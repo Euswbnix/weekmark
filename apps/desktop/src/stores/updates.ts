@@ -16,8 +16,9 @@ export type InstallState =
   | { phase: "installing" }
   | { phase: "restarting" }
   /**
-   * Refused as busy: a sync (this window's or another process's) started during the download.
-   * The app keeps the download, and the dialog installs it once the sync finishes.
+   * Refused as busy: work started during the download (a sync, this window's or another
+   * process's, an AI reading or a Codex download). The app keeps the download, and the dialog
+   * installs it once that work finishes.
    */
   | { phase: "held" }
   | { phase: "failed"; error: ApiError };
@@ -124,8 +125,10 @@ export function useInstallUpdate() {
       const apiError = toApiError(error);
       if (apiError.kind === "busy") {
         useUpdateStore.setState({ install: { phase: "held" } });
-        // Another process's sync shows in the status, which isn't polled while nothing syncs.
+        // Another process's sync shows in the status, which isn't polled while nothing syncs;
+        // an AI reading or a Codex download in the activity.
         void client.invalidateQueries({ queryKey: queryKeys.status() });
+        void client.invalidateQueries({ queryKey: queryKeys.activity() });
       } else {
         useUpdateStore.setState({ install: { phase: "failed", error: apiError } });
       }

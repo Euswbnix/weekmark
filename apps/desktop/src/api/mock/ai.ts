@@ -29,6 +29,7 @@ import {
 import type { PageLampApi } from "../client";
 import { ApiError } from "../errors";
 import { aiMaterialsState } from "../types";
+import type { MockActivity } from "./activity";
 import {
   CODING_PLAN_HOSTS,
   CODING_PLAN_KEY_PREFIXES,
@@ -73,6 +74,8 @@ type AiApi = Pick<
 export interface MockAiContext {
   scenario: MockScenario;
   now: () => Date;
+  /** A Codex install is listed while it runs. */
+  activity: MockActivity;
   /** Waits the mock's latency plus `extra` ms. */
   delay: (extra?: number) => Promise<void>;
   /** Delay between streamed events (install, sign-in) in ms. */
@@ -150,7 +153,12 @@ export function createMockAi(ctx: MockAiContext): AiApi {
   const unpricedAcks = new Set<string>();
   const features = new Map<AiFeature, ModelChoice | null>(FEATURES.map((f) => [f, null]));
   let budget: number | null = DEFAULT_BUDGET_MICRO_USD;
-  const codex = createMockCodex({ scenario, delay: ctx.delay, stepMs: ctx.stepMs });
+  const codex = createMockCodex({
+    scenario,
+    delay: ctx.delay,
+    stepMs: ctx.stepMs,
+    activity: ctx.activity,
+  });
   let usage: [number, UsageRow][] = [...mockUsage(scenario), ...codex.usageRows()];
 
   function record(presetId: string, providerId: string, baseUrl: string, key: string | null) {

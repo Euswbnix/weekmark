@@ -37,7 +37,11 @@
     "tryAgain": "Try again",
     "availableAfterSync": "Available when the sync finishes",
     "availableAfterOtherSync": "Available when the other sync (from the command line or another window) finishes",
+    "availableAfterGeneration": "Available when the AI finishes reading a syllabus or writing a study plan",
+    "availableAfterCodexInstall": "Available when the Codex download finishes",
     "held": "{{product}} will install the update when the sync finishes.",
+    "heldGeneration": "{{product}} will install the update when the AI finishes reading a syllabus or writing a study plan.",
+    "heldCodexInstall": "{{product}} will install the update when the Codex download finishes.",
     "progressLabel": "Update progress",
     "stopSync": "Stop the sync"
   },
@@ -68,6 +72,10 @@
       "course_removal": {
         "title": "Remove finished courses",
         "body": "When a course is over, you can remove it from {{product}}. You can undo it for 7 days, and your own course folders are never touched."
+      },
+      "syllabus_reading": {
+        "title": "Course dates from the syllabus",
+        "body": "With a model you set up, {{product}} can read a course's syllabus and propose its dates, each quoting the words it comes from. Nothing changes until you accept them."
       }
     }
   },

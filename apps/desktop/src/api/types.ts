@@ -126,9 +126,6 @@ export type {
   WhatsNewTopic,
 } from "./generated";
 
-// AiLabel.on_device until feat/course-ai merges (the augmentation lives there).
-import "./provisional/courseAi";
-
 import type { AiMaterialsState, AiPolicy, Course } from "./generated";
 
 /** RFC 3339 instant, e.g. "2026-09-25T14:03:00Z". */

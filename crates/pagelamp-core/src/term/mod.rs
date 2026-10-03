@@ -201,6 +201,9 @@ pub struct AiLabel {
     pub backend_label: String,
     pub model: String,
     pub created_at: Timestamp,
+    /// The model ran on this computer ("on-device model — check the dates", §7.12).
+    #[serde(default)]
+    pub on_device: bool,
 }
 
 /// One stretch of teaching: one for a one-term course, two for a full-year course.

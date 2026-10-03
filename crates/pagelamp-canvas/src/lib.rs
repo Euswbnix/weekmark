@@ -86,6 +86,10 @@ pub struct SyncOptions {
     pub files_dir: PathBuf,
     /// Only sync these course ids/codes (empty = all active courses).
     pub only_courses: Vec<String>,
+    /// With `download_files`: download only these files (material ids), e.g. the syllabus
+    /// candidates the student chose (D46); every other file is handled as in a sync without
+    /// downloads. `None`: all of them.
+    pub only_files: Option<std::collections::BTreeSet<String>>,
     /// How downloaded files are read (`ingest::Extractor`; one per sync).
     pub extractor: pagelamp_core::ingest::Extractor,
 }

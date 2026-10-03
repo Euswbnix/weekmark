@@ -11,6 +11,7 @@ import { ApiError } from "../errors";
 import type {
   AcceptedCalendar,
   AiLabel,
+  CalendarBatchEvent,
   CalendarCandidate,
   CalendarOrigin,
   CalendarProposal,
@@ -23,6 +24,7 @@ import type {
   ProposedDate,
 } from "../types";
 import { aiMaterialsState } from "../types";
+import type { MockActivity } from "./activity";
 import { addDays, dayFrom, isoOf, mondayFrom } from "./calendar";
 import { type MockCourse, type MockDb, type MockScenario, material } from "./fixtures";
 
@@ -64,6 +66,8 @@ export function createProposalsMock(deps: {
   db: MockDb;
   scenario: MockScenario;
   now: () => Date;
+  /** Readings are listed as generations while they run (a batch as one). */
+  activity: MockActivity;
   respond: <T>(value: T | (() => T), extraLatency?: number) => Promise<T>;
   findCourse: (courseId: string) => MockCourse;
   /** One step of a run (the mock's sync step; 0 in tests). */
@@ -524,43 +528,56 @@ export function createProposalsMock(deps: {
 
   const runs = {
     readCourseCalendar: (courseId, generationId, options, onEvent) =>
-      readOne(courseId, generationId, options.override_budget, onEvent),
+      deps.activity.during("generation", { generation_id: generationId }, () =>
+        readOne(courseId, generationId, options.override_budget, onEvent),
+      ),
 
-    readCourseCalendars: async (courseIds, batchId, options, onEvent) => {
-      const outcomes: CalendarRunOutcome[] = [];
-      for (const [index, courseId] of courseIds.entries()) {
-        if (cancelled.has(batchId)) break;
-        onEvent({ type: "course_started", course_id: courseId, index, total: courseIds.length });
-        let outcome: CalendarRunOutcome;
-        try {
-          const made = await readOne(
-            courseId,
-            `${batchId}/${courseId}`,
-            options.override_budget,
-            (event) => onEvent({ type: "gen", course_id: courseId, event }),
-            batchId,
-          );
-          outcome = { course_id: courseId, proposal_id: made.id, passing: made.passing };
-        } catch (error) {
-          const e = error instanceof ApiError ? error : null;
-          outcome = {
-            course_id: courseId,
-            passing: false,
-            blocked: e?.kind === "blocked" ? e.blocked : null,
-            error: e?.kind === "blocked" ? null : (e?.kind ?? "internal"),
-          };
-        }
-        outcomes.push(outcome);
-        onEvent({ type: "course_finished", outcome });
-      }
-      return outcomes;
-    },
+    readCourseCalendars: (courseIds, batchId, options, onEvent) =>
+      deps.activity.during("generation", { generation_id: batchId }, () =>
+        readBatch(courseIds, batchId, options.override_budget, onEvent),
+      ),
 
     cancelGeneration: (generationId) =>
       respond(() => {
         cancelled.add(generationId);
       }),
   } satisfies Pick<ProposalsApi, "readCourseCalendar" | "readCourseCalendars" | "cancelGeneration">;
+
+  /** A batch reading: one course after another until done or stopped. */
+  async function readBatch(
+    courseIds: string[],
+    batchId: string,
+    overrideBudget: boolean,
+    onEvent: (event: CalendarBatchEvent) => void,
+  ): Promise<CalendarRunOutcome[]> {
+    const outcomes: CalendarRunOutcome[] = [];
+    for (const [index, courseId] of courseIds.entries()) {
+      if (cancelled.has(batchId)) break;
+      onEvent({ type: "course_started", course_id: courseId, index, total: courseIds.length });
+      let outcome: CalendarRunOutcome;
+      try {
+        const made = await readOne(
+          courseId,
+          `${batchId}/${courseId}`,
+          overrideBudget,
+          (event) => onEvent({ type: "gen", course_id: courseId, event }),
+          batchId,
+        );
+        outcome = { course_id: courseId, proposal_id: made.id, passing: made.passing };
+      } catch (error) {
+        const e = error instanceof ApiError ? error : null;
+        outcome = {
+          course_id: courseId,
+          passing: false,
+          blocked: e?.kind === "blocked" ? e.blocked : null,
+          error: e?.kind === "blocked" ? null : (e?.kind ?? "internal"),
+        };
+      }
+      outcomes.push(outcome);
+      onEvent({ type: "course_finished", outcome });
+    }
+    return outcomes;
+  }
 
   const api: Omit<ProposalsApi, keyof typeof runs> = {
     courseCalendar: (courseId) => respond(() => view(findCourse(courseId))),

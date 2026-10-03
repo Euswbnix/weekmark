@@ -228,3 +228,13 @@ pub fn sharing_not_allowed_note() -> String {
          on this computer and your own AI app (over MCP) are not affected."
     )
 }
+
+/// The one-time question (b) reminder, after a course's first cloud reading (D37 option 2).
+pub fn sharing_reminder_note() -> String {
+    format!(
+        "This course's material text was just sent to a cloud AI service. Check whether your \
+         instructor allows that, then record it: `{} course sharing <course> allowed | \
+         not-sure | not-allowed`.",
+        pagelamp_core::brand::CLI_NAME
+    )
+}

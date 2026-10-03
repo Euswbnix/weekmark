@@ -58,6 +58,8 @@ pub struct CalendarInForce {
     /// The proposal's V8 cross-checks disagreed (stored with it): the calendar counts weeks at
     /// Medium, not High (design §7.5 V8).
     pub disagrees_with_notes: bool,
+    /// A quoted material changed and a quote is gone (§7.8): still in force, at Medium.
+    pub stale: bool,
 }
 
 /// The course dates form, as core validates it (the facade's `CourseDatesInput`).

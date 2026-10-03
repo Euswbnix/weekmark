@@ -10,10 +10,12 @@
 //!   `Store`; its progress travels back over a channel because the caller's `on_event` is not
 //!   `'static`.
 
+use std::collections::BTreeSet;
+
 use chrono::{NaiveDate, Utc};
 use pagelamp_canvas::{CanvasConfig, SyncOptions};
 use pagelamp_core::ingest::Extractor;
-use pagelamp_core::model::{SourceKind, SourceRecord};
+use pagelamp_core::model::{MaterialKind, SourceKind, SourceRecord};
 use pagelamp_core::paths;
 use pagelamp_core::source::{CancelFlag, CourseSyncSummary, SourceError, SyncProgress};
 use pagelamp_core::store::Store;
@@ -60,7 +62,10 @@ impl App {
         let mut results = Vec::with_capacity(sources.len());
         let extractor = self.extractor(cancel.flag());
         for source in &sources {
-            results.push(self.sync_one(source, &req, &extractor, &on_event).await);
+            results.push(
+                self.sync_one(source, &req, None, &extractor, &on_event)
+                    .await,
+            );
             if cancel.flag().is_cancelled() {
                 return Err(AppError::cancelled());
             }
@@ -88,7 +93,9 @@ impl App {
         let cancel = self.begin_cancellable();
         let source = self.source(source_id)?;
         let extractor = self.extractor(cancel.flag());
-        let result = self.sync_one(&source, &req, &extractor, &on_event).await;
+        let result = self
+            .sync_one(&source, &req, None, &extractor, &on_event)
+            .await;
         cancel.result(result)
     }
 
@@ -120,7 +127,65 @@ impl App {
         };
         let cancel = self.begin_cancellable();
         let extractor = self.extractor(cancel.flag());
-        let result = self.sync_one(&source, &req, &extractor, &on_event).await;
+        let result = self
+            .sync_one(&source, &req, None, &extractor, &on_event)
+            .await;
+        cancel.result(result)
+    }
+
+    /// Download chosen files of one Canvas course only (the syllabus candidates the student
+    /// picked, calendar design D46): a sync of that course that downloads just these material
+    /// ids. The same disclosure as `download_course_files` applies. `Invalid` for a folder
+    /// course, an empty list, or an id that isn't one of the course's files.
+    pub(crate) async fn download_chosen_files(
+        &self,
+        course: &str,
+        material_ids: Vec<String>,
+        on_event: impl Fn(SyncEvent) + Send + Sync,
+    ) -> Result<SourceSyncResult> {
+        let _lock = self.acquire_sync_lock()?;
+        let (course, files) = {
+            let store = self.read_store()?;
+            let course = store.resolve_course_with(course, true)?;
+            let files: BTreeSet<String> = store
+                .list_materials(&course.id)?
+                .into_iter()
+                .filter(|m| m.kind == MaterialKind::File)
+                .map(|m| m.id)
+                .collect();
+            (course, files)
+        };
+        if material_ids.is_empty() {
+            return Err(AppError::new(
+                AppErrorKind::Invalid,
+                "Choose a file to download.",
+            ));
+        }
+        if let Some(stray) = material_ids.iter().find(|id| !files.contains(*id)) {
+            return Err(AppError::new(
+                AppErrorKind::Invalid,
+                format!("{stray} is not a file of {}.", course.display_name()),
+            ));
+        }
+        let _activity = self.begin_activity(ActivityKind::Download, Some(&course.source_id));
+        let source = self.source(&course.source_id)?;
+        if source.kind != SourceKind::Canvas {
+            return Err(AppError::new(
+                AppErrorKind::Invalid,
+                "Only Canvas courses have files to download; folder courses are always indexed.",
+            ));
+        }
+        let req = SyncRequest {
+            download_files: true,
+            only_courses: vec![course.id],
+            ..SyncRequest::default()
+        };
+        let only: BTreeSet<String> = material_ids.into_iter().collect();
+        let cancel = self.begin_cancellable();
+        let extractor = self.extractor(cancel.flag());
+        let result = self
+            .sync_one(&source, &req, Some(&only), &extractor, &on_event)
+            .await;
         cancel.result(result)
     }
 
@@ -169,6 +234,7 @@ impl App {
         &self,
         source: &SourceRecord,
         req: &SyncRequest,
+        only_files: Option<&BTreeSet<String>>,
         extractor: &Extractor,
         on_event: &(dyn Fn(SyncEvent) + Send + Sync),
     ) -> SourceSyncResult {
@@ -184,10 +250,16 @@ impl App {
         let outcome = match source.kind {
             SourceKind::Folder => self.run_folder(source, extractor, &progress).await,
             SourceKind::Ical => self.run_ical(source, &progress).await,
-            SourceKind::Canvas => self.run_canvas(source, req, extractor, &progress).await,
+            SourceKind::Canvas => {
+                self.run_canvas(source, req, only_files, extractor, &progress)
+                    .await
+            }
         };
         if matches!(source.kind, SourceKind::Folder | SourceKind::Canvas) {
             self.relink_events();
+            if outcome.is_ok() {
+                self.scan_after_sync(&source.id);
+            }
         }
         self.remember_course_names();
         let finished_at = Utc::now();
@@ -372,6 +444,7 @@ impl App {
         &self,
         source: &SourceRecord,
         req: &SyncRequest,
+        only_files: Option<&BTreeSet<String>>,
         extractor: &Extractor,
         progress: &(dyn Fn(SyncProgress) + Send + Sync),
     ) -> std::result::Result<Counts, SourceError> {
@@ -385,6 +458,7 @@ impl App {
             max_file_bytes: u64::from(req.max_file_mb) * 1024 * 1024,
             files_dir: paths::files_dir_in(self.data_dir()),
             only_courses: req.only_courses.clone(),
+            only_files: only_files.cloned(),
             extractor: extractor.clone(),
         };
         let report = pagelamp_canvas::sync(&self.db_path(), &config, &options, progress).await?;

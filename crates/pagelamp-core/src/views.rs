@@ -16,10 +16,11 @@ use pagelamp_extract::FailureKind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::calendar::CalendarInForce;
 use crate::dates::{Tz, course_date, time_zone};
 use crate::lifecycle::{self, LifecycleInput};
 use crate::model::*;
-use crate::store::Store;
+use crate::store::{MIGRATED_FINGERPRINT, Store};
 use crate::term::phase::teaching_week_on;
 use crate::term::{CONFIRMED_DATES_KEY, ResolvedTerm, TermInput, resolve_term};
 use crate::timeline;
@@ -840,6 +841,53 @@ pub(crate) struct CourseData {
     module_names: HashMap<String, String>,
     module_weeks: HashMap<String, u32>,
     chunk_counts: HashMap<String, u32>,
+    /// The course's accepted calendar (schema v4), the resolver's first anchor.
+    calendar: Option<CalendarInForce>,
+    /// What the Timeline tab says about calendars: in force (stale or not), proposed, none.
+    calendar_status: CalendarStatus,
+}
+
+/// The course's calendar in force and its status (§7.8: stale when a quote is gone from a
+/// changed material; proposed when only proposals wait).
+fn calendar_in_force(
+    store: &Store,
+    course_id: &str,
+) -> Result<(Option<CalendarInForce>, CalendarStatus)> {
+    let Some(row) = store.accepted_calendar(course_id)? else {
+        let status = if store.calendar_proposals(course_id)?.is_empty() {
+            CalendarStatus::NoCalendar
+        } else {
+            CalendarStatus::Proposed
+        };
+        return Ok((None, status));
+    };
+    // A 0.1 override carried over by the v4 data step: `user_term_*` still hold it, and the
+    // resolver reads them as before (plausibility checks, a borrowed end).
+    if row.fingerprint == MIGRATED_FINGERPRINT {
+        return Ok((None, CalendarStatus::Accepted));
+    }
+    let stale = store.calendar_staleness(&row)?.stale;
+    let ai_label = row.provenance.as_ref().map(|p| AiLabel {
+        backend_label: p.backend_label.clone(),
+        model: p.model.clone(),
+        created_at: row.created_at,
+        on_device: p.on_device,
+    });
+    let status = if stale {
+        CalendarStatus::AcceptedStale
+    } else {
+        CalendarStatus::Accepted
+    };
+    Ok((
+        Some(CalendarInForce {
+            calendar: row.calendar,
+            origin: row.origin,
+            ai_label,
+            disagrees_with_notes: row.checks.disagrees_with_notes,
+            stale,
+        }),
+        status,
+    ))
 }
 
 /// The courses whose student dates are confirmed (`CONFIRMED_DATES_KEY`). A value that
@@ -871,7 +919,10 @@ impl CourseData {
             .iter()
             .filter_map(|m| Some((m.id.clone(), m.week_hint?)))
             .collect();
+        let (calendar, calendar_status) = calendar_in_force(store, &course.id)?;
         Ok(CourseData {
+            calendar,
+            calendar_status,
             materials: store.list_materials(&course.id)?,
             events: store.list_events(
                 DateTime::<Utc>::MIN_UTC,
@@ -893,8 +944,7 @@ impl CourseData {
             course,
             data: &self.term_data,
             dates_confirmed: self.dates_confirmed,
-            // Accepted calendars live in schema v4 (alpha.2); none before that.
-            calendar: None,
+            calendar: self.calendar.as_ref(),
             modules: &self.modules,
             materials: &self.materials,
             events: &self.events,
@@ -931,7 +981,8 @@ impl CourseData {
     pub(crate) fn timeline(&self, course: &Course, at: AsOf) -> (ResolvedTerm, CourseTimeline) {
         let input = self.input(course, at);
         let resolved = resolve_term(&input);
-        let timeline = timeline::infer_timeline(&input, &resolved);
+        let mut timeline = timeline::infer_timeline(&input, &resolved);
+        timeline.calendar = self.calendar_status;
         (resolved, timeline)
     }
 

@@ -37,7 +37,11 @@
     "tryAgain": "重试",
     "availableAfterSync": "同步结束后可用",
     "availableAfterOtherSync": "另一个同步（来自命令行或另一个窗口）结束后可用",
+    "availableAfterGeneration": "AI 读完课程大纲或写完学习计划后可用",
+    "availableAfterCodexInstall": "Codex 下载完成后可用",
     "held": "同步结束后，{{product}} 会接着安装这个更新。",
+    "heldGeneration": "AI 读完课程大纲或写完学习计划后，{{product}} 会接着安装这个更新。",
+    "heldCodexInstall": "Codex 下载完成后，{{product}} 会接着安装这个更新。",
     "progressLabel": "更新进度",
     "stopSync": "停止同步"
   },
@@ -68,6 +72,10 @@
       "course_removal": {
         "title": "移除已结束的课程",
         "body": "课程结束后，可以把它从 {{product}} 中移除。7 天内可以撤销，你自己的课程文件夹不会被改动。"
+      },
+      "syllabus_reading": {
+        "title": "从教学大纲读出课程日期",
+        "body": "用你设置的模型，{{product}} 可以读取课程的教学大纲并提出课程日期，每个日期都引用原文出处。在你确认之前，什么都不会改变。"
       }
     }
   },

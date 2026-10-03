@@ -4,6 +4,10 @@
     "args": {}
   },
   {
+    "cmd": "activity",
+    "args": {}
+  },
+  {
     "cmd": "list_sources",
     "args": {}
   },
@@ -365,6 +369,18 @@
     "cmd": "cancel_generation",
     "args": {
       "generationId": "contract-test-generation"
+    }
+  },
+  {
+    "cmd": "open_material",
+    "args": {
+      "materialId": "contract-test-material"
+    }
+  },
+  {
+    "cmd": "reveal_material",
+    "args": {
+      "materialId": "contract-test-material"
     }
   },
   {

@@ -18,7 +18,7 @@ use super::extraction::CalendarExtraction;
 use super::scan::scan;
 use super::text::rebuild_parts;
 use super::validate::{SourceMaterial, ValidationContext, validate};
-use crate::ai_gate::ManifestEntry;
+use crate::ai_gate::{GatedContext, ManifestEntry};
 use crate::dates::course_date;
 use crate::ingest::sha256_hex;
 use crate::model::{Course, EventKind};
@@ -162,6 +162,42 @@ impl ReadingInputs {
             today: self.today,
             full_year: self.full_year,
         })
+    }
+
+    /// `sources` keyed by the citation handles of `context`, as a model names materials. A
+    /// material that isn't a read candidate (an extra dated chunk's) is read from `store`.
+    pub fn sources_by_handle(
+        &self,
+        store: &Store,
+        context: &GatedContext,
+    ) -> crate::Result<HashMap<String, SourceMaterial>> {
+        let mut extra: HashMap<String, SourceMaterial> = HashMap::new();
+        let mut by_handle = HashMap::new();
+        for (handle, target) in context.citations() {
+            let id = &target.material_id;
+            let source = match self.sources.get(id) {
+                Some(source) => source.clone(),
+                None => match extra.get(id) {
+                    Some(source) => source.clone(),
+                    None => {
+                        let Some(material) = store.get_material(id)? else {
+                            continue;
+                        };
+                        let source = SourceMaterial {
+                            material_id: id.clone(),
+                            title: material.title.clone(),
+                            url: material.url.clone(),
+                            published_at: material.published_at,
+                            parts: rebuild_parts(&store.get_chunks(id, 0, None)?),
+                        };
+                        extra.insert(id.clone(), source.clone());
+                        source
+                    }
+                },
+            };
+            by_handle.insert(handle.to_string(), source);
+        }
+        Ok(by_handle)
     }
 
     /// The deterministic scan of the candidates that are read (§7.2); `None` when it finds

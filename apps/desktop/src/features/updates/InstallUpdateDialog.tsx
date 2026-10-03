@@ -2,7 +2,7 @@ import { LoaderCircle } from "lucide-react";
 import { useEffect, useId, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { AvailableUpdate } from "@/api/client";
-import { useUpdaterStatus } from "@/api/queries";
+import { useActivity, useUpdaterStatus } from "@/api/queries";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -17,12 +17,31 @@ import { Progress } from "@/components/ui/progress";
 import { useStopSync, useSyncActivity, useSyncStore } from "@/stores/sync";
 import { type InstallState, useInstallUpdate, useUpdateStore } from "@/stores/updates";
 
+/** Work that holds "Install and restart" back (App::activity, and the CLI's sync). */
+type Cause = "sync" | "other_sync" | "generation" | "codex_install";
+
+const AVAILABLE_AFTER = {
+  sync: "install.availableAfterSync",
+  other_sync: "install.availableAfterOtherSync",
+  generation: "install.availableAfterGeneration",
+  codex_install: "install.availableAfterCodexInstall",
+} as const satisfies Record<Cause, string>;
+
+/** After the download: what the install goes on after. */
+const HELD = {
+  sync: "install.held",
+  other_sync: "install.held",
+  generation: "install.heldGeneration",
+  codex_install: "install.heldCodexInstall",
+} as const satisfies Record<Cause, string>;
+
 /**
  * "Install PageLamp x.y.z?": the only way an update gets installed (decision D2: always ask).
- * Waits while any sync runs (the app's or the CLI's); on Windows it says PageLamp will close.
- * Once installing, it can't be dismissed: the app restarts at the end. A sync that started
- * during the download holds the install back; while the dialog stays open, the install goes on
- * when that sync finishes.
+ * Waits while anything runs that the restart would kill: a sync (the app's or the CLI's), an AI
+ * reading or a Codex download (App::activity). On Windows it says PageLamp will close.
+ * Once installing, it can't be dismissed: the app restarts at the end. Work that started during
+ * the download holds the install back; while the dialog stays open, the install goes on when
+ * that work finishes.
  */
 export function InstallUpdateDialog({
   update,
@@ -38,7 +57,20 @@ export function InstallUpdateDialog({
   const status = useUpdaterStatus();
   const install = useUpdateStore((s) => s.install);
   const start = useInstallUpdate();
-  const { busy, external } = useSyncActivity();
+  const sync = useSyncActivity();
+  const activity = useActivity(open);
+  const running = activity.data?.items ?? [];
+  // What holds the install back, a sync first: it can be stopped from here.
+  const cause: Cause | null = sync.external
+    ? "other_sync"
+    : sync.busy
+      ? "sync"
+      : running.some((item) => item.kind === "generation")
+        ? "generation"
+        : running.some((item) => item.kind === "codex_install")
+          ? "codex_install"
+          : null;
+  const busy = cause !== null;
   const stopping = useSyncStore((s) => s.stopping);
   const stopSync = useStopSync();
   const hintId = useId();
@@ -78,15 +110,17 @@ export function InstallUpdateDialog({
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {install.phase === "idle" ? null : <InstallProgress install={install} heldId={hintId} />}
+        {install.phase === "idle" ? null : (
+          <InstallProgress install={install} heldId={hintId} heldText={t(HELD[cause ?? "sync"])} />
+        )}
         <AlertDialogFooter className="items-center">
           {busy && !working && install.phase !== "held" ? (
             <span id={hintId} className="text-xs text-muted-foreground sm:mr-auto">
-              {external ? t("install.availableAfterOtherSync") : t("install.availableAfterSync")}
+              {cause ? t(AVAILABLE_AFTER[cause]) : null}
             </span>
           ) : null}
           {/* This window's sync can be stopped from here (design §7); the CLI's can't. */}
-          {busy && !external && !working ? (
+          {sync.busy && !sync.external && !working ? (
             <Button
               type="button"
               variant="outline"
@@ -116,14 +150,25 @@ export function InstallUpdateDialog({
   );
 }
 
-/** `heldId`: the held message describes the Install button, as the sync hint does otherwise. */
-function InstallProgress({ install, heldId }: { install: InstallState; heldId: string }) {
+/**
+ * `heldId`: the held message describes the Install button, as the hint does otherwise.
+ * `heldText` names what the install waits for.
+ */
+function InstallProgress({
+  install,
+  heldId,
+  heldText,
+}: {
+  install: InstallState;
+  heldId: string;
+  heldText: string;
+}) {
   const { t } = useTranslation("updates");
   const { t: tc } = useTranslation();
   if (install.phase === "held") {
     return (
       <p id={heldId} role="status" className="text-sm text-muted-foreground">
-        {t("install.held")}
+        {heldText}
       </p>
     );
   }

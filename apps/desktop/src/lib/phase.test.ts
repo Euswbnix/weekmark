@@ -64,6 +64,20 @@ describe("describePhase with the lifecycle", () => {
       true,
     );
     expect(outsideWeekViews(week4, lifecycle({ state: "ended" }))).toBe(true);
+    // A break by the student's own dates has no current week, and keeps the course's place
+    // too; a break by any other dates doesn't.
+    const upcoming = lifecycle({ state: "upcoming", starts_on: "2027-01-01" });
+    const ownBreak = timeline({
+      phase: "break",
+      default_week: 6,
+      current_break_kind: "reading_week",
+      term: resolution({ anchor: "student_confirmed" }),
+    });
+    expect(outsideWeekViews(ownBreak, upcoming)).toBe(false);
+    expect(describePhase(ownBreak, upcoming).kind).toBe("break");
+    const otherBreak = timeline({ phase: "break", term: resolution({ anchor: "lms_term" }) });
+    expect(outsideWeekViews(otherBreak, upcoming)).toBe(true);
+    expect(describePhase(otherBreak, upcoming)).toEqual({ kind: "startsOn", date: "2027-01-01" });
   });
 });
 

@@ -1,11 +1,18 @@
-//! `pagelamp courses`, `course timeline`, `course keep` and removing courses (`course remove`,
-//! `removed`, `restore`, `purge`, `forget`): course weeks, phases, the Past group and removal (docs/design/v0.3-course-calendar.md §7.13). Every default and grouping comes
-//! from the facade; this module only renders.
+//! `pagelamp courses`, `course timeline`, `course calendar`, `course keep` and removing courses
+//! (`course remove`, `removed`, `restore`, `purge`, `forget`): course weeks, phases, calendars,
+//! the Past group and removal (docs/design/v0.3-course-calendar.md §7.13). Every default and
+//! grouping comes from the facade; this module only renders.
 
 use chrono::NaiveDate;
-use pagelamp_app::{App, RemoveOptions, RestoreFailure, TombstoneState};
+use pagelamp_app::ai::GenEvent;
+use pagelamp_app::{
+    App, CourseCalendarView, ReadCalendarOptions, RemoveOptions, RestoreFailure, TombstoneState,
+};
+use pagelamp_core::calendar::CourseCalendar;
+use pagelamp_core::calendar::assemble::DateKind;
+use pagelamp_core::calendar::candidates::CandidateLeftOut;
 use pagelamp_core::model::{
-    CalendarOrigin, Confidence, CourseGroup, CourseLifecycle, CoursePhase, CourseTimeline,
+    AiLabel, CalendarOrigin, Confidence, CourseGroup, CourseLifecycle, CoursePhase, CourseTimeline,
     EvidenceItem, LifecycleState, TermAnchorSource,
 };
 use pagelamp_core::views::CourseSummary;
@@ -120,6 +127,14 @@ fn line(summary: &CourseSummary) -> String {
     )
 }
 
+/// A break week by the student's own dates. An upcoming course keeps its place in the week
+/// views there, as in a teaching week of those dates (the facade's rule in
+/// `pagelamp_core::views`): it has no current week then, so the week alone doesn't tell.
+fn own_break(timeline: &CourseTimeline) -> bool {
+    timeline.phase == CoursePhase::Break
+        && timeline.term.anchor == TermAnchorSource::StudentConfirmed
+}
+
 /// "week 4 (medium)", "reading week", "exams (after week 12)", "ended", "starts 2027-01-11"…
 /// A course that is over, inactive or hasn't started has no week: its lifecycle says which.
 pub fn week_label(timeline: &CourseTimeline, lifecycle: &CourseLifecycle) -> String {
@@ -130,8 +145,11 @@ pub fn week_label(timeline: &CourseTimeline, lifecycle: &CourseLifecycle) -> Str
     match lifecycle.state {
         LifecycleState::Ended => return "ended".to_string(),
         LifecycleState::Inactive => return "inactive".to_string(),
-        // (With a week: the student's own dates put an upcoming course in one; it is shown.)
-        LifecycleState::Upcoming if timeline.current_week.is_none() => return starts(),
+        // (With a week, or in a break of its own dates: the student's dates put an upcoming
+        // course there, and it is shown like a running one.)
+        LifecycleState::Upcoming if timeline.current_week.is_none() && !own_break(timeline) => {
+            return starts();
+        }
         LifecycleState::Upcoming
         | LifecycleState::Current
         | LifecycleState::Finishing
@@ -308,6 +326,213 @@ pub fn keep(
         ),
     }
     Ok(())
+}
+
+/// What `pagelamp course calendar` does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CalendarAction {
+    Show,
+    Scan,
+    Read { over_budget: bool },
+    Accept(i64),
+    Dismiss(i64),
+}
+
+/// `pagelamp course calendar <course> [--scan|--read|--accept N|--dismiss N]`
+pub async fn calendar(
+    app: &App,
+    course: &str,
+    action: CalendarAction,
+    json: bool,
+) -> anyhow::Result<()> {
+    match action {
+        CalendarAction::Show => {}
+        CalendarAction::Scan => match app.scan_course_calendar(course)? {
+            Some(proposal) if !json => {
+                println!("Proposal #{} from the syllabus scan.", proposal.id)
+            }
+            Some(_) => {}
+            None if !json => println!("The scan found nothing new to propose."),
+            None => {}
+        },
+        CalendarAction::Read { over_budget } => {
+            let generation_id = format!("cli-{}", std::process::id());
+            let options = ReadCalendarOptions {
+                override_budget: over_budget,
+            };
+            let proposal = app
+                .read_course_calendar(course, &generation_id, options, |event| {
+                    if let GenEvent::Started {
+                        backend_label,
+                        model,
+                        ..
+                    } = event
+                    {
+                        eprintln!("Reading with {backend_label} · {model}…");
+                    }
+                })
+                .await?;
+            if !json {
+                println!("Proposal #{} read by AI.", proposal.id);
+                if proposal.sharing_reminder {
+                    println!("{}", crate::text::sharing_reminder_note());
+                }
+            }
+        }
+        CalendarAction::Accept(id) => {
+            app.accept_calendar_proposal(id, None)?;
+        }
+        CalendarAction::Dismiss(id) => app.dismiss_calendar_proposal(id)?,
+    }
+    let view = app.course_calendar(course)?;
+    if json {
+        return print_json(&view);
+    }
+    print_calendar_view(&view);
+    Ok(())
+}
+
+fn print_calendar_view(view: &CourseCalendarView) {
+    match &view.accepted {
+        Some(accepted) => {
+            let stale = if accepted.stale {
+                " — a quoted material changed; read it again?"
+            } else {
+                ""
+            };
+            println!(
+                "In force: {}{stale}",
+                provenance(accepted.origin, accepted.ai_label.as_ref())
+            );
+            print_course_calendar(&accepted.calendar, "  ");
+        }
+        None => println!("No calendar in force."),
+    }
+    for proposal in &view.proposals {
+        let verdict = if proposal.passing {
+            "no conflicts".to_string()
+        } else {
+            format!("{} conflict(s) to choose between", proposal.conflicts.len())
+        };
+        let week = proposal
+            .resulting_week_today
+            .map_or_else(|| "no week".to_string(), |week| format!("week {week}"));
+        println!(
+            "Proposal #{}: {}; {verdict}; after accepting: {week}, {}",
+            proposal.id,
+            provenance(proposal.origin, proposal.ai_label.as_ref()),
+            phase_word(proposal.resulting_phase)
+        );
+        for date in &proposal.dates {
+            let when = match date.end {
+                Some(end) => format!("{} – {end}", date.date),
+                None => date.date.to_string(),
+            };
+            println!("  {:<11} {when}", kind_word(date.kind));
+            for evidence in &date.evidence {
+                if let Some(quote) = &evidence.quote {
+                    let place = evidence
+                        .locator
+                        .as_deref()
+                        .map_or_else(String::new, |l| format!(", {l}"));
+                    println!("      \"{quote}\" — {}{place}", evidence.title);
+                }
+            }
+        }
+        let dropped: u32 = proposal.dropped.iter().map(|d| d.count).sum();
+        if dropped > 0 {
+            println!("  {dropped} item(s) left out: their words weren't in the materials");
+        }
+    }
+    println!("Materials a reading uses:");
+    for candidate in &view.candidates {
+        let state = match candidate.left_out {
+            None => "read".to_string(),
+            Some(reason) => format!("not read: {}", left_out_word(reason)),
+        };
+        let download = if candidate.downloadable {
+            " (can be downloaded)"
+        } else {
+            ""
+        };
+        println!("  [{state}] {}{download}", candidate.title);
+    }
+    if let Some(reason) = view.blocked {
+        println!("Reading with AI: not now ({})", reason.as_str());
+    }
+}
+
+fn print_course_calendar(calendar: &CourseCalendar, indent: &str) {
+    for segment in &calendar.segments {
+        let end = segment
+            .last_class
+            .map_or_else(|| "?".to_string(), |d| d.to_string());
+        println!(
+            "{indent}Classes {} – {end} (weeks from {})",
+            segment.first_class, segment.first_week_number
+        );
+    }
+    for item in &calendar.breaks {
+        println!(
+            "{indent}Break {} – {}{}",
+            item.span.start,
+            item.span.end,
+            if item.numbered { " (numbered)" } else { "" }
+        );
+    }
+    if let Some(exams) = calendar.exam_period {
+        println!("{indent}Exams {} – {}", exams.start, exams.end);
+    }
+}
+
+fn provenance(origin: CalendarOrigin, label: Option<&AiLabel>) -> String {
+    match (origin, label) {
+        (_, Some(label)) => format!(
+            "read by AI · {} · {}{}",
+            label.backend_label,
+            label.model,
+            if label.on_device {
+                " (on this computer — check the dates)"
+            } else {
+                ""
+            }
+        ),
+        (CalendarOrigin::Scan, None) => "from the syllabus scan".to_string(),
+        (CalendarOrigin::User, None) => "your dates".to_string(),
+        (CalendarOrigin::Legacy, None) => "set in PageLamp 0.1, check them".to_string(),
+        (other, None) => other.as_str().to_string(),
+    }
+}
+
+fn kind_word(kind: DateKind) -> &'static str {
+    match kind {
+        DateKind::FirstClass => "first class",
+        DateKind::LastClass => "last class",
+        DateKind::BreakSpan => "break",
+        DateKind::ExamPeriod => "exams",
+        DateKind::FinalExam => "final exam",
+        DateKind::WeekStart => "week",
+    }
+}
+
+fn left_out_word(reason: CandidateLeftOut) -> &'static str {
+    match reason {
+        CandidateLeftOut::NoText => "no text",
+        CandidateLeftOut::Scanned => "scanned, no text",
+        CandidateLeftOut::OverBudget => "over the limit",
+        CandidateLeftOut::ExcludedByStudent => "you removed it",
+    }
+}
+
+fn phase_word(phase: CoursePhase) -> &'static str {
+    match phase {
+        CoursePhase::NotStarted => "not started",
+        CoursePhase::Teaching => "teaching",
+        CoursePhase::Break => "break",
+        CoursePhase::ExamPeriod => "exams",
+        CoursePhase::Ended => "ended",
+        CoursePhase::Unknown => "phase unknown",
+    }
 }
 
 /// `pagelamp course remove <courses…> [--dry-run] [--now] [--keep-files] [--delete-backup]`

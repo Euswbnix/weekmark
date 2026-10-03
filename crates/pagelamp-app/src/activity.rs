@@ -1,6 +1,6 @@
 //! What the app is doing right now (`App::activity`), so a UI can hold back "Install and
-//! restart" while a sync runs. M0 tracks syncs and file downloads started through this `App`
-//! (every clone shares the registry); generations and Codex installs join in later milestones.
+//! restart" while anything runs (model-access design §3.7): syncs, file downloads, Codex installs
+//! and model runs started through this `App` (every clone shares the registry).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -24,13 +24,19 @@ pub enum ActivityKind {
     Download,
     /// `install_codex`: downloading and verifying the Codex runtime.
     CodexInstall,
+    /// A model run, from its gate to its stored answer (`read_course_calendar`, and every
+    /// feature that runs a model); a batch (`read_course_calendars`) is one item.
+    Generation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ActivityItem {
     pub kind: ActivityKind,
-    /// The one source it works on; `None` for `sync_all`.
+    /// The one source it works on; `None` for `sync_all` and a generation.
     pub source_id: Option<String>,
+    /// A generation's id (a batch's for a batch): `cancel_generation` stops it.
+    #[serde(default)]
+    pub generation_id: Option<String>,
     pub started_at: Timestamp,
 }
 
@@ -97,6 +103,21 @@ impl App {
         kind: ActivityKind,
         source_id: Option<&str>,
     ) -> ActivityGuard {
+        self.register_activity(kind, source_id, None)
+    }
+
+    /// Register generation `generation_id` until the returned guard is dropped
+    /// (`App::register_run`).
+    pub(crate) fn begin_generation(&self, generation_id: &str) -> ActivityGuard {
+        self.register_activity(ActivityKind::Generation, None, Some(generation_id))
+    }
+
+    fn register_activity(
+        &self,
+        kind: ActivityKind,
+        source_id: Option<&str>,
+        generation_id: Option<&str>,
+    ) -> ActivityGuard {
         let id = self.state.activity.next.fetch_add(1, Ordering::Relaxed);
         self.state
             .activity
@@ -108,6 +129,7 @@ impl App {
                 ActivityItem {
                     kind,
                     source_id: source_id.map(str::to_string),
+                    generation_id: generation_id.map(str::to_string),
                     started_at: Utc::now().trunc_subsecs(0),
                 },
             );

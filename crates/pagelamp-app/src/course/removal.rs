@@ -353,7 +353,9 @@ impl App {
             .set_tombstone_state(removed_id, TombstoneState::Restoring)?;
         let cancel = self.begin_cancellable();
         let extractor = self.extractor(cancel.flag());
-        let result = self.sync_one(&source, &req, &extractor, &|_| {}).await;
+        let result = self
+            .sync_one(&source, &req, None, &extractor, &|_| {})
+            .await;
         let store = self.write_store()?;
         if settle_restore(&store, removed_id)? {
             return Ok(RestoreOutcome {

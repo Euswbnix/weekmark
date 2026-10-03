@@ -33,6 +33,7 @@ it("sends the commands and arguments the Rust side expects", async () => {
   const onEvent = () => {};
 
   await api.status();
+  await api.activity();
   await api.listSources();
   await api.addCanvasSource(OFFLINE_CANVAS_URL, "contract-test-token");
   await api.addFolderSource("/tmp/contract-test-courses", "2026-09-08", "Courses");
@@ -107,6 +108,8 @@ it("sends the commands and arguments the Rust side expects", async () => {
     () => {},
   );
   await api.cancelGeneration("contract-test-generation");
+  await api.openMaterial("contract-test-material");
+  await api.revealMaterial("contract-test-material");
   await api.clearKeepCourseCurrent(COURSE);
   await api.confirmCourseDates(COURSE);
   await api.mcpClientConfigs();

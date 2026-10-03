@@ -13,10 +13,12 @@ import type {
   DisclosureFacts,
   ModeAUsage,
   ModelInfo,
+  RuntimeEvent,
   UsageRow,
 } from "../ai";
 import type { PageLampApi } from "../client";
 import { ApiError } from "../errors";
+import type { MockActivity } from "./activity";
 import type { MockScenario } from "./fixtures";
 
 type CodexApi = Pick<
@@ -188,6 +190,7 @@ export function createMockCodex(options: {
   scenario: MockScenario;
   delay: (extra?: number) => Promise<void>;
   stepMs: number;
+  activity: MockActivity;
 }): MockCodex {
   const { delay, stepMs } = options;
   const start = scenarioState(options.scenario);
@@ -236,6 +239,43 @@ export function createMockCodex(options: {
     }
   }
 
+  /** Download, verify and install the pinned runtime; stops at the next step when cancelled. */
+  async function install(
+    installId: string,
+    onEvent: (event: RuntimeEvent) => void,
+  ): Promise<CodexStatus> {
+    await delay();
+    const total = MOCK_CODEX_DOWNLOAD_BYTES;
+    const check = () => {
+      if (cancelledInstalls.has(installId)) {
+        cancelledInstalls.delete(installId);
+        // The partial download is deleted, never resumed.
+        throw new ApiError("cancelled", "Download cancelled.");
+      }
+    };
+    onEvent({ type: "download_started", total_bytes: total });
+    for (const part of [0.2, 0.45, 0.7, 1]) {
+      await sleep(stepMs);
+      check();
+      onEvent({
+        type: "progress",
+        downloaded_bytes: Math.round(total * part),
+        total_bytes: total,
+      });
+    }
+    await sleep(stepMs);
+    check();
+    onEvent({ type: "verifying" });
+    await sleep(stepMs);
+    onEvent({ type: "installing" });
+    await sleep(stepMs);
+    state.installed = MOCK_CODEX_PIN;
+    state.source = "managed";
+    if (state.outdated === "install_pin") state.outdated = "none";
+    onEvent({ type: "done", version: MOCK_CODEX_PIN });
+    return status();
+  }
+
   const api: CodexApi = {
     codexStatus: async () => {
       await delay();
@@ -243,37 +283,9 @@ export function createMockCodex(options: {
     },
 
     installCodex: async (installId, onEvent) => {
-      await delay();
+      // Refused before the activity starts, like the facade.
       requireOffered();
-      const total = MOCK_CODEX_DOWNLOAD_BYTES;
-      const check = () => {
-        if (cancelledInstalls.has(installId)) {
-          cancelledInstalls.delete(installId);
-          // The partial download is deleted, never resumed.
-          throw new ApiError("cancelled", "Download cancelled.");
-        }
-      };
-      onEvent({ type: "download_started", total_bytes: total });
-      for (const part of [0.2, 0.45, 0.7, 1]) {
-        await sleep(stepMs);
-        check();
-        onEvent({
-          type: "progress",
-          downloaded_bytes: Math.round(total * part),
-          total_bytes: total,
-        });
-      }
-      await sleep(stepMs);
-      check();
-      onEvent({ type: "verifying" });
-      await sleep(stepMs);
-      onEvent({ type: "installing" });
-      await sleep(stepMs);
-      state.installed = MOCK_CODEX_PIN;
-      state.source = "managed";
-      if (state.outdated === "install_pin") state.outdated = "none";
-      onEvent({ type: "done", version: MOCK_CODEX_PIN });
-      return status();
+      return options.activity.during("codex_install", {}, () => install(installId, onEvent));
     },
 
     cancelCodexInstall: async (installId) => {

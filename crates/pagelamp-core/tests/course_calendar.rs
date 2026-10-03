@@ -1187,6 +1187,7 @@ fn user_calendar(draft: &DatesDraft) -> CalendarInForce {
         origin: CalendarOrigin::User,
         ai_label: None,
         disagrees_with_notes: false,
+        stale: false,
     }
 }
 
@@ -1236,6 +1237,14 @@ fn reading_week_from_confirmed_calendar() {
     assert_eq!(
         (disputed.current_week, disputed.confidence),
         (Some(8), Confidence::Medium)
+    );
+    // So does one whose quoted syllabus changed and lost a quote (§7.8).
+    let mut stale = user_calendar(&fall_draft(false));
+    stale.stale = true;
+    case.calendar = Some(stale);
+    assert_eq!(
+        case.timeline("2026-11-02").term.anchor_confidence,
+        Confidence::Medium
     );
     case.calendar = Some(user_calendar(&fall_draft(false)));
     assert!(

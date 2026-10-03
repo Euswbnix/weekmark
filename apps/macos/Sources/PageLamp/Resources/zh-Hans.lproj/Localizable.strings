@@ -1557,6 +1557,8 @@
 "sources.technical.titleFor" = "技术详情：%1$@";
 "sources.title" = "数据来源与同步";
 "updates.install.aiApp" = "更新完成后，请退出并重新打开你的 AI 应用，让它使用新的 PageLamp。";
+"updates.install.availableAfterCodexInstall" = "Codex 下载完成后可用";
+"updates.install.availableAfterGeneration" = "AI 读完课程大纲或写完学习计划后可用";
 "updates.install.availableAfterOtherSync" = "另一个同步（来自命令行或另一个窗口）结束后可用";
 "updates.install.availableAfterSync" = "同步结束后可用";
 "updates.install.body" = "PageLamp 会下载更新、校验签名、完成安装，然后重新启动。";
@@ -1565,6 +1567,8 @@
 "updates.install.downloadingUnknown" = "正在下载…";
 "updates.install.failed" = "更新没能安装。";
 "updates.install.held" = "同步结束后，PageLamp 会接着安装这个更新。";
+"updates.install.heldCodexInstall" = "Codex 下载完成后，PageLamp 会接着安装这个更新。";
+"updates.install.heldGeneration" = "AI 读完课程大纲或写完学习计划后，PageLamp 会接着安装这个更新。";
 "updates.install.installing" = "正在安装…";
 "updates.install.progressLabel" = "更新进度";
 "updates.install.restarting" = "正在重启 PageLamp…";
@@ -1610,5 +1614,7 @@
 "updates.whatsNew.topics.course_removal.title" = "移除已结束的课程";
 "updates.whatsNew.topics.course_weeks.body" = "每门课都会显示当前是第几周、处于哪个阶段，已经结束的课程会归入“往期课程”。";
 "updates.whatsNew.topics.course_weeks.title" = "每门课都有周次和阶段";
+"updates.whatsNew.topics.syllabus_reading.body" = "用你设置的模型，PageLamp 可以读取课程的教学大纲并提出课程日期，每个日期都引用原文出处。在你确认之前，什么都不会改变。";
+"updates.whatsNew.topics.syllabus_reading.title" = "从教学大纲读出课程日期";
 "updates.whatsNew.topics.update_check.body" = "它每天会从 GitHub 下载一个很小的文件，看看有没有新版本。和任何下载一样，GitHub 会看到你的 IP 地址和 PageLamp 的版本号；不会发送任何课程内容。安装任何更新之前一定会先问你。";
 "updates.whatsNew.topics.update_check.title" = "PageLamp 现在可以自己更新了";

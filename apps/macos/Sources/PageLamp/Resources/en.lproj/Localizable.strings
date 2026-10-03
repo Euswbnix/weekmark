@@ -1557,6 +1557,8 @@
 "sources.technical.titleFor" = "Technical details for %1$@";
 "sources.title" = "Sources & sync";
 "updates.install.aiApp" = "Afterwards, quit and reopen your AI app so it uses the new PageLamp.";
+"updates.install.availableAfterCodexInstall" = "Available when the Codex download finishes";
+"updates.install.availableAfterGeneration" = "Available when the AI finishes reading a syllabus or writing a study plan";
 "updates.install.availableAfterOtherSync" = "Available when the other sync (from the command line or another window) finishes";
 "updates.install.availableAfterSync" = "Available when the sync finishes";
 "updates.install.body" = "PageLamp downloads the update, checks its signature, installs it and restarts.";
@@ -1565,6 +1567,8 @@
 "updates.install.downloadingUnknown" = "Downloading…";
 "updates.install.failed" = "The update couldn't be installed.";
 "updates.install.held" = "PageLamp will install the update when the sync finishes.";
+"updates.install.heldCodexInstall" = "PageLamp will install the update when the Codex download finishes.";
+"updates.install.heldGeneration" = "PageLamp will install the update when the AI finishes reading a syllabus or writing a study plan.";
 "updates.install.installing" = "Installing…";
 "updates.install.progressLabel" = "Update progress";
 "updates.install.restarting" = "Restarting PageLamp…";
@@ -1610,5 +1614,7 @@
 "updates.whatsNew.topics.course_removal.title" = "Remove finished courses";
 "updates.whatsNew.topics.course_weeks.body" = "Each course shows its current week and phase, and finished courses move to “Past courses”.";
 "updates.whatsNew.topics.course_weeks.title" = "Weeks and phases for every course";
+"updates.whatsNew.topics.syllabus_reading.body" = "With a model you set up, PageLamp can read a course's syllabus and propose its dates, each quoting the words it comes from. Nothing changes until you accept them.";
+"updates.whatsNew.topics.syllabus_reading.title" = "Course dates from the syllabus";
 "updates.whatsNew.topics.update_check.body" = "Once a day it downloads a small file from GitHub to see whether there's a new version. GitHub sees your IP address and your PageLamp version, as with any download; nothing about your courses is sent. It always asks before installing anything.";
 "updates.whatsNew.topics.update_check.title" = "PageLamp now updates itself";

@@ -16,6 +16,11 @@ use crate::Result;
 /// Settings key listing the courses whose dates the student confirmed.
 pub const COURSE_DATES_CONFIRMED: &str = "course_dates.confirmed";
 
+/// The fingerprint of the rows this step writes. The views know them by it: these rows restate
+/// the 0.1 overrides that `user_term_*` still hold, and the resolver keeps reading those (with
+/// their plausibility checks and a borrowed end) until the student saves or accepts new dates.
+pub const MIGRATED_FINGERPRINT: &str = "legacy";
+
 impl Store {
     /// Runs inside the migration transaction, right after `SCHEMA_V4`.
     pub(super) fn migrate_legacy_calendars(&self) -> Result<()> {
@@ -43,8 +48,14 @@ impl Store {
                 "INSERT INTO course_calendars
                      (course_id, origin, state, calendar_json, evidence_json, checks_json,
                       manifest_json, fingerprint, created_at, decided_at)
-                 VALUES (?1, ?2, 'accepted', ?3, '[]', '{}', '[]', 'legacy', ?4, ?4)",
-                params![course_id, origin, legacy_calendar_json(start, end), now],
+                 VALUES (?1, ?2, 'accepted', ?3, '[]', '{}', '[]', ?4, ?5, ?5)",
+                params![
+                    course_id,
+                    origin,
+                    legacy_calendar_json(start, end),
+                    MIGRATED_FINGERPRINT,
+                    now
+                ],
             )?;
         }
         Ok(())

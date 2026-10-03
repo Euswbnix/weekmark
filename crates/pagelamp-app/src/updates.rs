@@ -75,6 +75,7 @@ const WHATS_NEW: &[(WhatsNewTopic, &str)] = &[
     (WhatsNewTopic::UpdateCheck, "0.3.0-alpha.1"),
     (WhatsNewTopic::CourseWeeks, "0.3.0-alpha.1"),
     (WhatsNewTopic::CourseRemoval, "0.3.0-alpha.2"),
+    (WhatsNewTopic::SyllabusReading, "0.3.0-alpha.3"),
 ];
 
 /// Where updates come from.
@@ -113,6 +114,9 @@ pub enum WhatsNewTopic {
     CourseWeeks,
     /// Removing finished courses: 7 days to undo, the student's own folders untouched.
     CourseRemoval,
+    /// AI reads a syllabus into cited date proposals; setting up a model (including the
+    /// ChatGPT plan) comes with it.
+    SyllabusReading,
 }
 
 /// What's new since `since` (`None`: an update from 0.1, which didn't record its version).
@@ -369,11 +373,15 @@ mod tests {
     #[test]
     fn topics_are_the_ones_introduced_after_the_old_version() {
         use WhatsNewTopic::*;
-        let all = [UpdateCheck, CourseWeeks, CourseRemoval];
+        let all = [UpdateCheck, CourseWeeks, CourseRemoval, SyllabusReading];
         assert_eq!(topics_since(None), all);
         assert_eq!(topics_since(Some("0.1.0")), all);
-        assert_eq!(topics_since(Some("0.3.0-alpha.1")), [CourseRemoval]);
-        assert!(topics_since(Some("0.3.0-alpha.2")).is_empty());
+        assert_eq!(
+            topics_since(Some("0.3.0-alpha.1")),
+            [CourseRemoval, SyllabusReading]
+        );
+        assert_eq!(topics_since(Some("0.3.0-alpha.2")), [SyllabusReading]);
+        assert!(topics_since(Some("0.3.0-alpha.3")).is_empty());
         assert!(topics_since(Some("0.3.0")).is_empty());
     }
 

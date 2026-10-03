@@ -9,6 +9,7 @@ import type { AiPolicy, IsoDate, StartupTasks, UpdatePrefs } from "./types";
 export const queryKeys = {
   all: ["pagelamp"] as const,
   status: () => [...queryKeys.all, "status"] as const,
+  activity: () => [...queryKeys.all, "activity"] as const,
   sources: () => [...queryKeys.all, "sources"] as const,
   courses: () => [...queryKeys.all, "courses"] as const,
   course: (courseId: string) => [...queryKeys.all, "course", courseId] as const,
@@ -41,6 +42,20 @@ export function useStatus() {
     queryFn: () => api.status(),
     // While another process (e.g. the CLI) is syncing, poll so "busy" clears by itself.
     refetchInterval: (query) => (query.state.data?.sync_in_progress ? 3000 : false),
+  });
+}
+
+/**
+ * What the app is doing (App::activity), polled while `watching`: the install dialog, so
+ * "Install and restart" comes back by itself when a reading or a Codex download ends.
+ */
+export function useActivity(watching: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: queryKeys.activity(),
+    queryFn: () => api.activity(),
+    enabled: watching,
+    refetchInterval: watching ? 2000 : false,
   });
 }
 

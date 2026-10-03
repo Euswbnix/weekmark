@@ -94,6 +94,17 @@ impl Store {
         expect_changed(changed, "course", course_id)
     }
 
+    /// Record, once, that the question (b) reminder for `course_id` is shown: true the first
+    /// time (the course's first cloud run with material text, D37 option 2 and D49), false
+    /// after that.
+    pub fn claim_sharing_reminder(&self, course_id: &str, now: Timestamp) -> Result<bool> {
+        let inserted = self.conn.execute(
+            "INSERT OR IGNORE INTO reminders_shown (id, shown_at) VALUES (?1, ?2)",
+            params![sharing_reminder_id(course_id), super::ts_text(now)],
+        )?;
+        Ok(inserted == 1)
+    }
+
     // ----- usage ledger ------------------------------------------------------------------------
 
     pub fn record_ai_usage(&self, record: &UsageRecord) -> Result<()> {
@@ -164,11 +175,17 @@ impl Store {
                  UPDATE study_plans SET generation_id = NULL WHERE generation_id IS NOT NULL;
                  DELETE FROM generations;
                  DELETE FROM ai_usage;
-                 DELETE FROM model_providers;",
+                 DELETE FROM model_providers;
+                 DELETE FROM reminders_shown WHERE id LIKE 'material_sharing:%';",
             )?;
             Ok(removed)
         })
     }
+}
+
+/// The `reminders_shown` id of a course's question (b) reminder.
+fn sharing_reminder_id(course_id: &str) -> String {
+    format!("material_sharing:{course_id}")
 }
 
 fn saturate(n: u64) -> i64 {

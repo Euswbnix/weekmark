@@ -96,6 +96,26 @@ impl FileFormat {
     }
 }
 
+/// Plain-text extensions that are documents rather than code (`from_extension`'s
+/// `PlainText` line mixes both).
+const TEXT_DOCUMENTS: [&str; 2] = ["txt", "tex"];
+
+/// Whether `path` is a document this crate reads that the operating system's default app may
+/// open: PDF, Office, notebook, Markdown, plain text or TeX, by extension, and not labelled
+/// as another format by `mime_hint`. Never code or scripts (`.py`, `.js` … run when opened on
+/// some systems), HTML, or anything this crate doesn't read.
+pub(crate) fn opens_as_document(path: &Path, mime_hint: Option<&str>) -> bool {
+    let Some(ext) = extension(path) else {
+        return false;
+    };
+    let document = match FileFormat::from_extension(&ext) {
+        Some(FileFormat::Html) | None => false,
+        Some(FileFormat::PlainText) => TEXT_DOCUMENTS.contains(&ext.as_str()),
+        Some(_) => true,
+    };
+    document && FileFormat::detect(path, mime_hint) == FileFormat::from_extension(&ext)
+}
+
 /// Lower-cased file extension without the dot, if any.
 fn extension(path: &Path) -> Option<String> {
     path.extension()
@@ -126,6 +146,55 @@ pub(crate) fn describe_file_type(path: &Path, mime_hint: Option<&str>) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_documents_open_with_the_default_app() {
+        for name in [
+            "Outline.pdf",
+            "notes.DOCX",
+            "slides.pptx",
+            "lab.ipynb",
+            "README.md",
+            "a.markdown",
+            "notes.txt",
+            "paper.tex",
+        ] {
+            assert!(opens_as_document(Path::new(name), None), "{name}");
+        }
+        for name in [
+            "run.command",
+            "setup.exe",
+            "App.app",
+            "install.pkg",
+            "disk.dmg",
+            "go.sh",
+            "script.py",
+            "code.js",
+            "types.ts",
+            "page.html",
+            "logo.svg",
+            "link.lnk",
+            "site.url",
+            "place.webloc",
+            "app.desktop",
+            "query.sql",
+            "no_extension",
+            "old.ppt",
+        ] {
+            assert!(!opens_as_document(Path::new(name), None), "{name}");
+        }
+        // The MIME type must agree with the extension.
+        assert!(opens_as_document(
+            Path::new("a.pdf"),
+            Some("application/pdf")
+        ));
+        assert!(opens_as_document(Path::new("a.md"), Some("text/plain")));
+        assert!(!opens_as_document(Path::new("a.pdf"), Some("text/html")));
+        assert!(!opens_as_document(
+            Path::new("a.txt"),
+            Some("application/pdf")
+        ));
+    }
 
     fn detect(name: &str, mime: Option<&str>) -> Option<FileFormat> {
         FileFormat::detect(Path::new(name), mime)

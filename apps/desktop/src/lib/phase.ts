@@ -25,8 +25,11 @@ export function outsideWeekViews(timeline: CourseTimeline, lifecycle: CourseLife
   return (
     lifecycle.state === "ended" ||
     lifecycle.state === "inactive" ||
-    // The student's own dates can put an upcoming course in a week; it keeps that week.
-    (lifecycle.state === "upcoming" && (timeline.current_week ?? null) === null)
+    // The student's own dates can put an upcoming course in a week, or in a break between
+    // weeks (which has no current week): it keeps its place, as the facade does.
+    (lifecycle.state === "upcoming" &&
+      (timeline.current_week ?? null) === null &&
+      !(timeline.phase === "break" && timeline.term.anchor === "student_confirmed"))
   );
 }
 

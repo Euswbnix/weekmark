@@ -40,7 +40,7 @@ use pagelamp_app::diagnostics::{
 use pagelamp_app::{
     Activity, ActivityItem, ActivityKind, AppErrorKind, AppStatus, BackupInfo, BreakInput,
     CalendarBatchEvent, CalendarRunOutcome, CourseCalendarView, CourseDatesInput,
-    CourseLifecycleEntry, InstallKind, LifecycleSummary, LostAfterPurge, McpClient,
+    CourseLifecycleEntry, InstallKind, LifecycleSummary, LocalFileUse, LostAfterPurge, McpClient,
     McpClientConfig, McpLaunch, McpNoteCode, PurgeReport, ReadCalendarOptions, RemovalPreview,
     RemovalPreviewItem, RemovalReason, RemovalReport, RemoveOptions, RemovedCourse, RestoreFailure,
     RestoreOutcome, SegmentInput, SourceSyncResult, StartupTasks, SyllabusOffer, SyncEvent,
@@ -397,6 +397,8 @@ pub struct AiLabel {
     pub backend_label: String,
     pub model: String,
     pub created_at: Timestamp,
+    #[uniffi(default)]
+    pub on_device: bool,
 }
 
 #[uniffi::remote(Record)]
@@ -996,6 +998,7 @@ pub enum WhatsNewTopic {
     UpdateCheck,
     CourseWeeks,
     CourseRemoval,
+    SyllabusReading,
 }
 
 #[uniffi::remote(Record)]
@@ -1030,12 +1033,15 @@ pub enum ActivityKind {
     Sync,
     Download,
     CodexInstall,
+    Generation,
 }
 
 #[uniffi::remote(Record)]
 pub struct ActivityItem {
     pub kind: ActivityKind,
     pub source_id: Option<String>,
+    #[uniffi(default)]
+    pub generation_id: Option<String>,
     pub started_at: Timestamp,
 }
 
@@ -1762,6 +1768,13 @@ pub enum LoginEvent {
     },
     Waiting,
     Done,
+}
+
+/// What a shell will do with a material's local file (`material_local_file`).
+#[uniffi::remote(Enum)]
+pub enum LocalFileUse {
+    Open,
+    Reveal,
 }
 
 // ---------------------------------------------------------------------------------------------

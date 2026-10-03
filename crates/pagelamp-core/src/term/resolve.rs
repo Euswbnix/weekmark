@@ -569,8 +569,8 @@ fn calendar_anchor(in_force: &CalendarInForce) -> Option<Anchor> {
         start: first.first_class,
         end: segments.last().and_then(|s| s.last_class),
         // The student confirmed it, whoever read the dates (a scan too); V8 disagreement at
-        // acceptance caps it at Medium.
-        confidence: if in_force.disagrees_with_notes {
+        // acceptance, or a quote gone from a changed material since, caps it at Medium.
+        confidence: if in_force.disagrees_with_notes || in_force.stale {
             Confidence::Medium
         } else {
             Confidence::High

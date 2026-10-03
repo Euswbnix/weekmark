@@ -204,6 +204,10 @@ pub(crate) struct File {
 pub(crate) struct Page {
     #[serde(default, deserialize_with = "lenient")]
     pub page_id: Option<CanvasId>,
+    /// The course's front page (S4). Whether the pages list carries it is unverified; when it
+    /// doesn't, the signal is simply absent.
+    #[serde(default, deserialize_with = "lenient")]
+    pub front_page: Option<bool>,
     /// The page's slug (used to fetch it).
     #[serde(default, deserialize_with = "lenient")]
     pub url: Option<String>,

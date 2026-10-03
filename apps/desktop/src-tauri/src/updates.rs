@@ -22,7 +22,10 @@ use std::future::Future;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-use pagelamp_app::{AppError, AppErrorKind, UpdateChannel, UpdateCheckOutcome, UpdateCheckRecord};
+use pagelamp_app::{
+    Activity, ActivityKind, AppError, AppErrorKind, UpdateChannel, UpdateCheckOutcome,
+    UpdateCheckRecord,
+};
 use pagelamp_core::brand;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -425,9 +428,9 @@ async fn fetch_and_install<'a, E>(
     Ok(gate)
 }
 
-/// Busy while this app runs anything (a sync, a download, a model run) or another process
-/// syncs. Without an open core (e.g. its database is from a newer PageLamp) nothing of ours can
-/// run, and installing the update is the way out.
+/// Busy while this app runs anything (a sync, a download, a Codex install, a model run) or
+/// another process syncs. Without an open core (e.g. its database is from a newer PageLamp)
+/// nothing of ours can run, and installing the update is the way out.
 fn refuse_while_busy(backend: &Backend) -> CmdResult<()> {
     // Work that got past `spawn_work`'s gate check before it closed but hasn't registered in
     // activity() yet (a retry with a kept package has no download to wait it out).
@@ -440,14 +443,30 @@ fn refuse_while_busy(backend: &Backend) -> CmdResult<()> {
     let Ok(facade) = backend.app() else {
         return Ok(());
     };
-    let activity = facade.activity();
-    if activity.items.is_empty() && !activity.other_process_syncing {
-        return Ok(());
+    match busy_message(&facade.activity()) {
+        None => Ok(()),
+        Some(message) => Err(AppError::new(AppErrorKind::Busy, message)),
     }
-    Err(AppError::new(
-        AppErrorKind::Busy,
-        "A sync is running. Install the update when it finishes.",
-    ))
+}
+
+/// What holds an install back, a sync first; `None` when nothing does.
+fn busy_message(activity: &Activity) -> Option<&'static str> {
+    let running = |kind| activity.items.iter().any(|item| item.kind == kind);
+    if activity.other_process_syncing
+        || running(ActivityKind::Sync)
+        || running(ActivityKind::Download)
+    {
+        Some("A sync is running. Install the update when it finishes.")
+    } else if running(ActivityKind::Generation) {
+        Some(
+            "The AI is still working (reading a syllabus or writing a study plan). \
+             Install the update when it finishes.",
+        )
+    } else if running(ActivityKind::CodexInstall) {
+        Some("Codex is still downloading. Install the update when it finishes.")
+    } else {
+        None
+    }
 }
 
 /// Windows: the NSIS pre-install hook (windows/hooks.nsh) renames a running `pagelamp.exe` (an
@@ -602,6 +621,42 @@ mod tests {
     #[test]
     fn the_running_version_is_the_crate_version() {
         assert_eq!(current_version().to_string(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn an_install_says_what_holds_it_back() {
+        use pagelamp_app::{Activity, ActivityItem, ActivityKind};
+
+        use super::busy_message;
+
+        let item = |kind| ActivityItem {
+            kind,
+            source_id: None,
+            generation_id: None,
+            started_at: chrono::Utc::now(),
+        };
+        let activity = |kinds: &[ActivityKind], other_process_syncing| Activity {
+            items: kinds.iter().copied().map(item).collect(),
+            other_process_syncing,
+        };
+        assert_eq!(busy_message(&activity(&[], false)), None);
+        let sync = Some("A sync is running. Install the update when it finishes.");
+        assert_eq!(busy_message(&activity(&[], true)), sync);
+        assert_eq!(
+            busy_message(&activity(&[ActivityKind::Download], false)),
+            sync
+        );
+        // A sync is named first: it can be stopped from the dialog.
+        let both = activity(&[ActivityKind::Generation, ActivityKind::Sync], false);
+        assert_eq!(busy_message(&both), sync);
+        assert!(
+            busy_message(&activity(&[ActivityKind::Generation], false))
+                .is_some_and(|m| m.starts_with("The AI is still working"))
+        );
+        assert!(
+            busy_message(&activity(&[ActivityKind::CodexInstall], false))
+                .is_some_and(|m| m.starts_with("Codex is still downloading"))
+        );
     }
 
     mod install {

@@ -21,9 +21,14 @@ use super::{
     ManifestEntry,
 };
 use crate::ai::{BlockReason, Destination};
-use crate::model::{AiMaterialsState, Course, MaterialKind, TextStatus};
+use crate::calendar::candidates::{
+    CandidateLeftOut, CandidateSignals, candidates_in, extra_chunks, select_chunks,
+};
+use crate::dates::course_date;
+use crate::model::{AiMaterialsState, Chunk, Course, EventKind, MaterialKind, Module, TextStatus};
 use crate::store::Store;
-use crate::views::{self, AsOf, MaterialView};
+use crate::term::ResolvedTerm;
+use crate::views::{self, AsOf, CourseData, MaterialView};
 
 /// Words that mark a title as an assessment (whole words, any case) [tunable; open item].
 const ASSESSMENT_WORDS: [&str; 10] = [
@@ -413,6 +418,275 @@ pub(crate) fn looks_like_assessment(title: &str) -> bool {
                 }))
     };
     ASSESSMENT_WORDS.iter().any(|w| has(w)) && !STUDY_WORDS.iter().any(|w| has(w))
+}
+
+/// Most week-numbered material titles in a calendar reading's structure block.
+const CALENDAR_STRUCTURE_TITLES: usize = 40;
+/// Most class events in a calendar reading's structure block.
+const CALENDAR_STRUCTURE_EVENTS: usize = 20;
+
+/// A syllabus reading's context (calendar design §7.3): gated like an explanation (visible,
+/// `readable`, question (b) allowing `destination`), then the course's candidates (§7.1), each
+/// with the chunks that say most about dates within a fair share of `budget`, up to 8 dated
+/// chunks of other materials, and a structure block (term, session window, modules, week
+/// numbers, class events) that only helps the model tell which year the materials are for.
+/// `NoReadableMaterials` when no candidate has text.
+pub fn calendar_context(
+    store: &Store,
+    course: &str,
+    at: AsOf,
+    destination: Destination,
+    budget: ContextBudget,
+    signals: &CandidateSignals,
+) -> Result<GatedContext, GateError> {
+    let result = store.in_read_transaction(|store| {
+        let course = store.resolve_course_with(course, true)?;
+        if course.hidden {
+            return Ok(Err(BlockReason::CourseHidden));
+        }
+        match course.ai_materials() {
+            AiMaterialsState::Readable => {}
+            AiMaterialsState::TurnedOff => return Ok(Err(BlockReason::CourseAiTurnedOff)),
+            AiMaterialsState::WithheldByPolicy => {
+                return Ok(Err(BlockReason::CoursePolicyProhibited));
+            }
+        }
+        if !course.material_sharing.allows(destination) {
+            return Ok(Err(BlockReason::MaterialSharingNotAllowed));
+        }
+        let data = CourseData::load(store, &course)?;
+        let (resolved, _) = data.timeline(&course, at);
+        let candidates = candidates_in(store, &data, &resolved, signals)?;
+        let mut context = GatedContext::empty();
+        let mut read = Vec::new();
+        for scored in &candidates {
+            let candidate = &scored.candidate;
+            let reason = match candidate.left_out {
+                None => {
+                    read.push(candidate);
+                    continue;
+                }
+                Some(CandidateLeftOut::NoText | CandidateLeftOut::Scanned) => LeftOutReason::NoText,
+                Some(CandidateLeftOut::OverBudget) => LeftOutReason::OverBudget,
+                Some(CandidateLeftOut::ExcludedByStudent) => continue,
+            };
+            context.summary.left_out.push(LeftOutMaterial {
+                material_id: candidate.material_id.clone(),
+                title: candidate.title.clone(),
+                reason,
+            });
+        }
+        if read.is_empty() {
+            return Ok(Err(BlockReason::NoReadableMaterials));
+        }
+
+        // Dated chunks of other materials (a schedule on the first lecture's slides).
+        let read_ids: Vec<&str> = read.iter().map(|c| c.material_id.as_str()).collect();
+        let mut others = Vec::new();
+        for material in &data.materials {
+            let usable = !read_ids.contains(&material.id.as_str())
+                && material.kind != MaterialKind::ExternalLink
+                && material.text_status == TextStatus::Ok
+                && data.chunks_of(&material.id) > 0
+                && !looks_like_assessment(&material.title);
+            if usable {
+                others.extend(store.get_chunks(&material.id, 0, None)?);
+            }
+        }
+        let extras = extra_chunks(&others);
+        let extra_chars: usize = others
+            .iter()
+            .filter(|chunk| {
+                extras
+                    .iter()
+                    .any(|(id, ord)| *id == chunk.material_id && *ord == chunk.ord)
+            })
+            .map(|chunk| chunk.text.chars().count())
+            .sum();
+
+        context.blocks.push(Block::Structure(calendar_structure(
+            &course, &data, &resolved, at,
+        )));
+        let texts = read
+            .iter()
+            .map(|c| store.get_chunks(&c.material_id, 0, None))
+            .collect::<crate::Result<Vec<_>>>()?;
+        let sizes: Vec<usize> = texts
+            .iter()
+            .map(|chunks| chunks.iter().map(|c| c.text.chars().count()).sum())
+            .collect();
+        let shares = fair_shares(&sizes, budget.max_chars.saturating_sub(extra_chars));
+        for ((candidate, chunks), share) in read.iter().zip(&texts).zip(shares) {
+            let selection = select_chunks(chunks, share);
+            if selection.chosen.is_empty() {
+                context.summary.left_out.push(LeftOutMaterial {
+                    material_id: candidate.material_id.clone(),
+                    title: candidate.title.clone(),
+                    reason: LeftOutReason::OverBudget,
+                });
+                continue;
+            }
+            let material = data
+                .materials
+                .iter()
+                .find(|m| m.id == candidate.material_id);
+            push_chunks(
+                &mut context,
+                candidate.material_id.as_str(),
+                &candidate.title,
+                candidate.url.as_deref(),
+                material.and_then(|m| m.content_hash.clone()),
+                chunks
+                    .iter()
+                    .filter(|chunk| selection.chosen.contains(&chunk.ord)),
+            );
+            context.summary.materials_included += 1;
+            if !selection.skipped.is_empty() {
+                context.summary.materials_trimmed += 1;
+            }
+        }
+        for material in &data.materials {
+            let chosen: Vec<&Chunk> = others
+                .iter()
+                .filter(|chunk| chunk.material_id == material.id)
+                .filter(|chunk| {
+                    extras
+                        .iter()
+                        .any(|(id, ord)| *id == chunk.material_id && *ord == chunk.ord)
+                })
+                .collect();
+            if chosen.is_empty() {
+                continue;
+            }
+            push_chunks(
+                &mut context,
+                &material.id,
+                &material.title,
+                material.url.as_deref(),
+                material.content_hash.clone(),
+                chosen.into_iter(),
+            );
+            context.summary.materials_included += 1;
+            context.summary.materials_trimmed += 1;
+        }
+        context.summary.courses.push(ContextCourse {
+            course_id: course.id.clone(),
+            state: AiMaterialsState::Readable,
+            text_included: true,
+        });
+        Ok(Ok(context))
+    })?;
+    result.map_err(GateError::Blocked)
+}
+
+/// Add `chunks` of one material, each with its own handle, and its manifest entry.
+fn push_chunks<'a>(
+    context: &mut GatedContext,
+    material_id: &str,
+    title: &str,
+    url: Option<&str>,
+    content_hash: Option<String>,
+    chunks: impl Iterator<Item = &'a Chunk>,
+) {
+    let mut ords = Vec::new();
+    for chunk in chunks {
+        ords.push(chunk.ord);
+        let handle = format!("c{}", context.handles() + 1);
+        context.blocks.push(Block::Material {
+            handle,
+            target: CitationTarget {
+                material_id: material_id.to_string(),
+                title: title.to_string(),
+                locator: chunk.locator.clone(),
+                url: url.map(str::to_string),
+            },
+            text: chunk.text.clone(),
+        });
+    }
+    context.manifest.materials.push(ManifestEntry {
+        material_id: material_id.to_string(),
+        content_hash,
+        chunk_ords: ords,
+    });
+}
+
+/// The structure a syllabus reading gets (rule 8 structure, wrapped as data): it only helps
+/// the model tell which year the materials are for.
+fn calendar_structure(
+    course: &Course,
+    data: &CourseData,
+    resolved: &ResolvedTerm,
+    at: AsOf,
+) -> String {
+    let mut text = format!("Course: {}\nToday: {}\n", course.display_name(), at.today);
+    let lms = &data.term_data.lms;
+    if let Some(name) = &lms.term_name {
+        let _ = write!(text, "LMS term: {name}");
+        if let (Some(start), Some(end)) = (lms.term_start, lms.term_end) {
+            let _ = write!(text, " ({start} to {end})");
+        }
+        text.push('\n');
+    }
+    if let Some(session) = &resolved.session {
+        let _ = writeln!(
+            text,
+            "Session {}: {} to {}",
+            session.session, session.window.start, session.window.end
+        );
+    }
+    let unlocking: Vec<&Module> = data
+        .modules
+        .iter()
+        .filter(|m| m.unlock_at.is_some())
+        .collect();
+    if !unlocking.is_empty() {
+        text.push_str("Modules:\n");
+        for module in unlocking {
+            if let Some(unlock) = module.unlock_at {
+                let _ = writeln!(
+                    text,
+                    "- {} (unlocks {})",
+                    module.name,
+                    course_date(unlock, resolved.tz)
+                );
+            }
+        }
+    }
+    let mut numbered: Vec<(u32, NaiveDate, &str)> = data
+        .materials
+        .iter()
+        .filter_map(|m| {
+            Some((
+                m.week_hint?,
+                course_date(m.published_at?, resolved.tz),
+                m.title.as_str(),
+            ))
+        })
+        .collect();
+    numbered.sort();
+    if !numbered.is_empty() {
+        text.push_str("Materials with week numbers:\n");
+        for (week, posted, title) in numbered.iter().take(CALENDAR_STRUCTURE_TITLES) {
+            let _ = writeln!(text, "- Week {week}: {title} (posted {posted})");
+        }
+    }
+    let mut classes: Vec<(NaiveDate, &str)> = data
+        .events
+        .iter()
+        .filter(|event| event.kind == EventKind::ClassEvent)
+        .filter_map(|event| {
+            let at = event.starts_at.or(event.due_at)?;
+            Some((course_date(at, resolved.tz), event.title.as_str()))
+        })
+        .collect();
+    classes.sort();
+    if !classes.is_empty() {
+        text.push_str("Class events:\n");
+        for (day, title) in classes.iter().take(CALENDAR_STRUCTURE_EVENTS) {
+            let _ = writeln!(text, "- {day}: {title}");
+        }
+    }
+    text.trim_end().to_string()
 }
 
 /// Split `budget` characters fairly: every material gets the same share, and what a small one

@@ -382,6 +382,23 @@ pub(crate) fn html_to_text(html: &str) -> String {
         .to_string()
 }
 
+/// Files of this course the syllabus links to (S5): `/courses/<course>/files/<file>` anywhere
+/// in its HTML (links, download links, API endpoints), as material ids.
+pub(crate) fn syllabus_file_links(
+    ids: Ids<'_>,
+    course: &CanvasId,
+    html: &str,
+) -> std::collections::BTreeSet<String> {
+    static FILE_LINK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"/courses/([0-9~]+)/files/([0-9~]+)").expect("valid regex")
+    });
+    FILE_LINK
+        .captures_iter(html)
+        .filter(|captures| captures[1] == course.0)
+        .map(|captures| ids.file(&CanvasId(captures[2].to_string())))
+        .collect()
+}
+
 /// `base` + path segments (each percent-encoded).
 fn canvas_url(base: &Url, segments: &[&str]) -> String {
     let mut url = base.clone();

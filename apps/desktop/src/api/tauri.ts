@@ -33,6 +33,7 @@ function eventChannel<E = SyncEvent>(onEvent: (event: E) => void): Channel<E> {
 export function createTauriApi(): PageLampApi {
   return {
     status: () => call("status"),
+    activity: () => call("activity"),
     listSources: () => call("list_sources"),
     addCanvasSource: (baseUrl, token) => call("add_canvas_source", { baseUrl, token }),
     addFolderSource: (path, termStart, label) =>

@@ -62,7 +62,9 @@
 mod builders;
 
 pub(crate) use builders::looks_like_assessment;
-pub use builders::{ContextBudget, GateError, PlanScope, note_context, plan_context, week_context};
+pub use builders::{
+    ContextBudget, GateError, PlanScope, calendar_context, note_context, plan_context, week_context,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -180,6 +182,14 @@ impl GatedContext {
                 ..
             } if own == handle => Some(target),
             _ => None,
+        })
+    }
+
+    /// Every citation handle of this context and where it points, in order.
+    pub fn citations(&self) -> impl Iterator<Item = (&str, &CitationTarget)> {
+        self.blocks.iter().filter_map(|block| match block {
+            Block::Material { handle, target, .. } => Some((handle.as_str(), target)),
+            Block::Structure(_) => None,
         })
     }
 

@@ -4,9 +4,10 @@
 
 use pagelamp_core::ai::{AiFeature, BlockReason, Destination};
 use pagelamp_core::ai_gate::{
-    ContextBudget, GateError, GatedContext, PlanScope, RenderedPrompt, assemble, note_context,
-    plan_context, week_context,
+    ContextBudget, GateError, GatedContext, PlanScope, RenderedPrompt, assemble, calendar_context,
+    note_context, plan_context, week_context,
 };
+use pagelamp_core::calendar::extraction::CalendarExtraction;
 use pagelamp_core::planner::PlanTasks;
 use pagelamp_core::store::Store;
 use pagelamp_core::views::AsOf;
@@ -14,7 +15,7 @@ use pagelamp_llm::OutputSpec;
 use pagelamp_llm::profile::ProviderProfile;
 
 use super::settings::{self, backend_key};
-use super::{BackendRef, CostEstimate, EstimateRequest, prompts};
+use super::{BackendRef, CostEstimate, EstimateRequest, ModelChoice, prompts};
 use crate::{App, AppError, AppErrorKind, Result};
 
 /// Characters of material text an explanation may carry (design §4.2 starting value).
@@ -23,6 +24,11 @@ pub(crate) const EXPLANATION_CONTEXT_CHARS: usize = 200_000;
 pub(crate) const EXPLANATION_MAX_OUTPUT: u32 = 6_000;
 pub(crate) const PLAN_MAX_OUTPUT: u32 = 4_000;
 pub(crate) const NOTE_MAX_OUTPUT: u32 = 1_000;
+/// A syllabus reading (calendar design §7.3).
+pub(crate) const CALENDAR_MAX_OUTPUT: u32 = 4_000;
+/// Characters of material text a syllabus reading may carry, in the cloud and on this computer.
+pub(crate) const CALENDAR_CONTEXT_CHARS: usize = 60_000;
+pub(crate) const CALENDAR_LOCAL_CONTEXT_CHARS: usize = 24_000;
 /// The default study-plan horizon (days).
 pub(crate) const DEFAULT_PLAN_DAYS: u32 = 14;
 
@@ -32,33 +38,16 @@ impl App {
             EstimateRequest::StudyPlan { .. } => AiFeature::StudyPlan,
             EstimateRequest::WeeklyExplanation { .. } => AiFeature::WeeklyExplanation,
             EstimateRequest::WeeklyNote => AiFeature::WeeklyNote,
-            EstimateRequest::CourseCalendar { .. } => {
-                return Err(AppError::new(
-                    AppErrorKind::Invalid,
-                    "Reading course calendars with AI isn't available in this build yet.",
-                ));
+            EstimateRequest::CourseCalendar { courses } => {
+                return self.calendar_estimate(courses);
             }
         };
         let store = self.read_store()?;
-        let routing = settings::routing(&store)?;
-        let Some(choice) = routing.0.get(&feature).cloned() else {
+        let Some(choice) = feature_choice(&store, feature)? else {
             return Ok(blocked_estimate(BlockReason::NoModelChosen));
         };
-        // The ChatGPT plan through Codex runs in OpenAI's cloud; its tokens are counted like
-        // OpenAI's Responses wire. No key needed: an estimate never reads the keychain.
+        let (profile, destination) = self.estimate_profile(&choice)?;
         let codex = choice.backend == BackendRef::Codex;
-        let profile = if codex {
-            pagelamp_llm::profile::preset("openai")
-                .expect("the openai preset")
-                .clone()
-        } else {
-            self.provider_profile(&choice.backend)?
-        };
-        let destination = if !codex && profile.on_device() {
-            Destination::OnDevice
-        } else {
-            Destination::Cloud
-        };
         let at = AsOf::now_local();
 
         // The gate decides what may be sent at all, question (b) included.
@@ -128,6 +117,150 @@ impl App {
         })
     }
 
+    /// "Read syllabi for N courses" (or one): each course's context gated on its own and
+    /// counted; blocked only when no course can be read, or by what stops every run.
+    fn calendar_estimate(&self, courses: &[String]) -> Result<CostEstimate> {
+        if courses.is_empty() {
+            return Err(AppError::new(
+                AppErrorKind::Invalid,
+                "Choose at least one course.",
+            ));
+        }
+        let store = self.read_store()?;
+        let Some(choice) = feature_choice(&store, AiFeature::CourseCalendar)? else {
+            return Ok(blocked_estimate(BlockReason::NoModelChosen));
+        };
+        let (profile, destination) = self.estimate_profile(&choice)?;
+        let at = AsOf::now_local();
+        let mut total: Option<pagelamp_llm::estimate::Estimate> = None;
+        let mut first_block = None;
+        for course in courses {
+            let course = store.resolve_course_with(course, true)?;
+            let signals = store.calendar_signals(&course.id)?;
+            let budget = calendar_budget(destination);
+            match calendar_context(&store, &course.id, at, destination, budget, &signals) {
+                Ok(context) => {
+                    let (prompt, output, max_output) =
+                        request_shape(AiFeature::CourseCalendar, &context);
+                    let one = pagelamp_llm::estimate::estimate(
+                        &profile,
+                        &choice.model,
+                        &prompt,
+                        &output,
+                        choice.effort,
+                        max_output,
+                    );
+                    total = Some(match total {
+                        None => one,
+                        Some(sum) => pagelamp_llm::estimate::Estimate {
+                            input_tokens: sum.input_tokens + one.input_tokens,
+                            max_output_tokens: sum.max_output_tokens + one.max_output_tokens,
+                            reasoning_allowance: sum.reasoning_allowance + one.reasoning_allowance,
+                            repair_possible: sum.repair_possible || one.repair_possible,
+                            micro_usd_upper: sum
+                                .micro_usd_upper
+                                .zip(one.micro_usd_upper)
+                                .map(|(a, b)| a + b),
+                            price_known: sum.price_known && one.price_known,
+                        },
+                    });
+                }
+                Err(GateError::Blocked(reason)) => {
+                    first_block.get_or_insert(reason);
+                }
+                Err(GateError::Store(err)) => return Err(err.into()),
+            }
+        }
+        let Some(estimate) = total else {
+            return Ok(blocked_estimate(
+                first_block.unwrap_or(BlockReason::NoReadableMaterials),
+            ));
+        };
+        let codex = choice.backend == BackendRef::Codex;
+        let would_block = if codex {
+            self.codex_blocks(&store)?
+        } else {
+            self.other_blocks(
+                &store,
+                &choice.backend,
+                &choice.model,
+                &profile,
+                estimate.micro_usd_upper,
+                estimate.price_known,
+            )?
+        };
+        Ok(CostEstimate {
+            micro_usd_upper: if codex {
+                None
+            } else {
+                estimate.micro_usd_upper
+            },
+            input_tokens: estimate.input_tokens,
+            max_output_tokens: estimate.max_output_tokens,
+            reasoning_allowance: estimate.reasoning_allowance,
+            repair_possible: estimate.repair_possible,
+            price_known: !codex && estimate.price_known,
+            would_block,
+        })
+    }
+
+    /// The profile tokens are counted with, and where the model runs. The ChatGPT plan through
+    /// Codex runs in OpenAI's cloud; its tokens are counted like OpenAI's Responses wire. No key
+    /// needed: an estimate never reads the keychain.
+    pub(crate) fn estimate_profile(
+        &self,
+        choice: &ModelChoice,
+    ) -> Result<(ProviderProfile, Destination)> {
+        if choice.backend == BackendRef::Codex {
+            let profile = pagelamp_llm::profile::preset("openai")
+                .expect("the openai preset")
+                .clone();
+            return Ok((profile, Destination::Cloud));
+        }
+        let profile = self.provider_profile(&choice.backend)?;
+        let destination = if profile.on_device() {
+            Destination::OnDevice
+        } else {
+            Destination::Cloud
+        };
+        Ok((profile, destination))
+    }
+
+    /// What stops a run of `choice` with this prompt besides the gate: the disclosure, then the
+    /// ChatGPT plan's weekly cap, or an unpriced model and the monthly budget (which the
+    /// student may go past for this run with `override_budget`).
+    pub(crate) fn run_blocks(
+        &self,
+        store: &Store,
+        choice: &ModelChoice,
+        prompt: &RenderedPrompt,
+        output: &OutputSpec,
+        max_output: u32,
+        override_budget: bool,
+    ) -> Result<Option<BlockReason>> {
+        if choice.backend == BackendRef::Codex {
+            return self.codex_blocks(store);
+        }
+        let (profile, _) = self.estimate_profile(choice)?;
+        let estimate = pagelamp_llm::estimate::estimate(
+            &profile,
+            &choice.model,
+            prompt,
+            output,
+            choice.effort,
+            max_output,
+        );
+        let block = self.other_blocks(
+            store,
+            &choice.backend,
+            &choice.model,
+            &profile,
+            estimate.micro_usd_upper,
+            estimate.price_known,
+        )?;
+        Ok(block.filter(|reason| !(override_budget && *reason == BlockReason::BudgetReached)))
+    }
+
     /// The ChatGPT plan: the disclosure, then the weekly run cap.
     fn codex_blocks(&self, store: &Store) -> Result<Option<BlockReason>> {
         // A Codex routing stored by an earlier build blocks here instead of running.
@@ -185,8 +318,27 @@ impl App {
     }
 }
 
+/// The model a feature is routed to, if any.
+pub(crate) fn feature_choice(store: &Store, feature: AiFeature) -> Result<Option<ModelChoice>> {
+    Ok(settings::routing(store)?.0.get(&feature).cloned())
+}
+
+/// How much course text a syllabus reading may carry: ≈ 60k characters in the cloud, ≈ 24k on
+/// this computer (calendar design §7.3).
+pub(crate) fn calendar_budget(destination: Destination) -> ContextBudget {
+    ContextBudget {
+        max_chars: match destination {
+            Destination::Cloud => CALENDAR_CONTEXT_CHARS,
+            Destination::OnDevice => CALENDAR_LOCAL_CONTEXT_CHARS,
+        },
+    }
+}
+
 /// The prompt, answer format and output budget a feature's run would use.
-fn request_shape(feature: AiFeature, context: &GatedContext) -> (RenderedPrompt, OutputSpec, u32) {
+pub(crate) fn request_shape(
+    feature: AiFeature,
+    context: &GatedContext,
+) -> (RenderedPrompt, OutputSpec, u32) {
     match feature {
         AiFeature::StudyPlan => (
             assemble(prompts::STUDY_PLAN, context, None),
@@ -198,10 +350,16 @@ fn request_shape(feature: AiFeature, context: &GatedContext) -> (RenderedPrompt,
             OutputSpec::Text,
             EXPLANATION_MAX_OUTPUT,
         ),
-        AiFeature::WeeklyNote | AiFeature::CourseCalendar => (
+        AiFeature::WeeklyNote => (
             assemble(prompts::WEEKLY_NOTE, context, None),
             OutputSpec::Text,
             NOTE_MAX_OUTPUT,
+        ),
+        AiFeature::CourseCalendar => (
+            assemble(prompts::COURSE_CALENDAR, context, None),
+            OutputSpec::for_type::<CalendarExtraction>("course_calendar")
+                .unwrap_or(OutputSpec::Text),
+            CALENDAR_MAX_OUTPUT,
         ),
     }
 }

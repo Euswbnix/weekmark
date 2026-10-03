@@ -43,6 +43,8 @@ pub const CHATGPT_PLAN_OFFERED: bool = false;
 pub const DEFAULT_WEEKLY_CAP: u32 = 40;
 /// The `backend` of Codex runs in the usage ledger.
 pub(crate) const USAGE_BACKEND: &str = "codex";
+/// How the ChatGPT plan is named in `ai_status`, run events and AI labels.
+pub(crate) const CODEX_LABEL: &str = "ChatGPT plan (through OpenAI Codex)";
 
 /// "Test": a structured answer, and no course data.
 const PROBE_INSTRUCTIONS: &str = "This is a connection test from PageLamp. Answer with the JSON \
@@ -559,6 +561,103 @@ impl App {
             Err(CodexError::Stopped) => failed(ModelErrorKind::BadOutput),
             Err(other) => return Err(codex_error(other)),
         })
+    }
+
+    /// One feature run through Codex (`run::App::run_model`): the pin's model for the feature
+    /// with its fallback, one Codex command at a time, the answer's JSON parsed (Codex holds it
+    /// to the schema), and one run of the weekly cap in the usage ledger.
+    pub(crate) async fn codex_run(
+        &self,
+        request: &super::run::RunRequest<'_>,
+        on_event: &(dyn Fn(super::GenEvent) + Send + Sync),
+        cancel: &CancellationToken,
+    ) -> Result<super::run::RunOutcome> {
+        let model = request.choice.model.as_str();
+        check_codex_model(model)?;
+        let binary = self.codex_binary().await?;
+        let exec = self.codex_exec(&binary);
+        let schema = match &request.output {
+            pagelamp_llm::OutputSpec::Json { schema, .. } => Some(schema),
+            pagelamp_llm::OutputSpec::Text => None,
+        };
+        on_event(super::GenEvent::Started {
+            generation_id: request.generation_id.to_string(),
+            backend_label: CODEX_LABEL.to_string(),
+            model: model.to_string(),
+            on_device: false,
+        });
+        on_event(super::GenEvent::Stage {
+            stage: super::GenStage::WaitingForModel,
+        });
+        let fallback = codex::pin().models.fallback.get(request.feature);
+        let run_folder = super::run::run_folder_name(request.generation_id);
+        let exec_request = ExecRequest {
+            prompt: &request.prompt,
+            model,
+            effort: request.choice.effort,
+            output_schema: schema,
+            run_id: &run_folder,
+        };
+        let result = {
+            let _one_at_a_time = self.codex_state().runs.lock().await;
+            exec.run_with_fallback(
+                &exec_request,
+                (fallback != model).then_some(fallback),
+                cancel,
+            )
+            .await
+        };
+        let plan = super::run::Billing::Plan;
+        match result {
+            Ok(outcome) => {
+                let usage = self.record_run_usage(
+                    USAGE_BACKEND,
+                    &outcome.model,
+                    request.feature,
+                    outcome.usage,
+                    plan,
+                    "ok",
+                )?;
+                on_event(super::GenEvent::Usage { usage });
+                let json = match schema {
+                    Some(_) => Some(serde_json::from_str(&outcome.text).map_err(|_| {
+                        model_error(
+                            ModelErrorKind::BadOutput,
+                            "Codex's answer wasn't the JSON PageLamp asked for.",
+                        )
+                    })?),
+                    None => None,
+                };
+                Ok(super::run::RunOutcome {
+                    json,
+                    backend_label: CODEX_LABEL.to_string(),
+                    model: outcome.model,
+                    on_device: false,
+                })
+            }
+            Err(err) => {
+                // Busy and a runtime that couldn't start never reached OpenAI: no run to count.
+                if !matches!(err, CodexError::Busy | CodexError::Start(_)) {
+                    let outcome = if matches!(err, CodexError::Cancelled) {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    };
+                    self.record_run_usage(
+                        USAGE_BACKEND,
+                        model,
+                        request.feature,
+                        pagelamp_llm::Usage::default(),
+                        plan,
+                        outcome,
+                    )?;
+                }
+                if let CodexError::Failed { kind } = err {
+                    self.note_outdated(kind, &binary)?;
+                }
+                Err(codex_error(err))
+            }
+        }
     }
 
     fn codex_exec(&self, binary: &Binary) -> Exec {
