@@ -30,8 +30,9 @@ import { SettingsSection } from "../../settings/SettingsSection";
 
 /**
  * Settings → "Removed courses" (calendar design §8.5): each removed course with Undo and
- * "Delete now" while its data waits the 7 days, then Restore (syncs it again) and Forget, and
- * "Delete files permanently" when moving its files to the Trash failed.
+ * "Delete now" while its data waits the 7 days, then Restore (syncs it again) and Forget. When
+ * moving its files to the Trash failed: "Try again", and "Delete files permanently" with its
+ * own confirmation, the only way files are deleted for good.
  */
 export function RemovedCoursesSection() {
   const { t } = useTranslation("removal");
@@ -50,7 +51,7 @@ export function RemovedCoursesSection() {
         ) : removed.data.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("removed.empty")}</p>
         ) : (
-          <ul aria-label={t("removed.listLabel")} className="divide-y rounded-lg border">
+          <ul aria-label={t("removed.listLabel")} className="divide-y border-y">
             {removed.data.map((course) => (
               <RemovedRow key={course.removed_id} course={course} onGone={focusList} />
             ))}
@@ -85,6 +86,24 @@ function RemovedRow({ course, onGone }: { course: RemovedCourse; onGone: () => v
     }
   }
 
+  /**
+   * Stage 2 for this course. `permanent` is true only from "Delete files permanently", after
+   * the Trash failed; "Delete now" and "Try again" never delete files for good.
+   */
+  async function purgeIt(permanent: boolean, done: string, stillPending: string) {
+    try {
+      const report = await purge.mutateAsync({
+        removedIds: [course.removed_id],
+        permanentIfNoTrash: permanent,
+      });
+      if (report.files_pending.includes(course.removed_id)) toast.warning(stillPending);
+      else toast.success(done);
+      if (report.backup_failed) toast.warning(t("toast.backupFailed"));
+    } catch (error) {
+      toast.error(errorText(error));
+    }
+  }
+
   async function run(action: () => Promise<unknown>, message: string, gone: boolean) {
     try {
       await action();
@@ -95,9 +114,13 @@ function RemovedRow({ course, onGone }: { course: RemovedCourse; onGone: () => v
     }
   }
 
-  const status =
-    course.state === "restoring" || restore.isPending
-      ? t("removed.restoring")
+  // A restore that isn't running here and didn't finish (another window, the CLI, or an
+  // interrupted one): the next sync settles it, or the student restores it again.
+  const stuck = course.state === "restoring" && !restore.isPending;
+  const status = restore.isPending
+    ? t("removed.restoring")
+    : stuck
+      ? t("removed.restoreStuck")
       : course.state === "pending"
         ? t("removed.pending", {
             date: formatDate(course.removed_at, i18n.language),
@@ -108,7 +131,7 @@ function RemovedRow({ course, onGone }: { course: RemovedCourse; onGone: () => v
           });
 
   return (
-    <li className="flex flex-wrap items-start justify-between gap-3 p-3 text-sm">
+    <li className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
       <div className="min-w-0 space-y-0.5">
         <p className="font-medium">
           {name}
@@ -142,56 +165,71 @@ function RemovedRow({ course, onGone }: { course: RemovedCourse; onGone: () => v
               body={t("removed.confirmDeleteNowBody")}
               busy={busy}
               onConfirm={() =>
-                run(
-                  () =>
-                    purge.mutateAsync({
-                      removedIds: [course.removed_id],
-                      permanentIfNoTrash: false,
-                    }),
-                  t("removed.deleted", { course: name }),
+                purgeIt(
                   false,
+                  t("removed.deleted", { course: name }),
+                  t("removed.deletedFilesPending", { course: name }),
                 )
               }
             />
           </>
         ) : course.state === "purged" ? (
           <>
+            {/* Only when the Trash failed, and only with its own confirmation (design §8.3). */}
             {course.files_pending ? (
-              <ConfirmButton
-                label={t("removed.deletePermanently")}
-                title={t("removed.confirmPermanentTitle", { course: name })}
-                body={t("removed.confirmPermanentBody")}
-                busy={busy}
-                onConfirm={() =>
-                  run(
-                    () =>
-                      purge.mutateAsync({
-                        removedIds: [course.removed_id],
-                        permanentIfNoTrash: true,
-                      }),
-                    t("removed.deleted", { course: name }),
-                    false,
-                  )
-                }
-              />
+              <>
+                <ActionButton
+                  onClick={() =>
+                    void purgeIt(
+                      false,
+                      t("removed.movedToTrash", { course: name }),
+                      t("removed.stillPending", { course: name }),
+                    )
+                  }
+                  busy={busy}
+                  label={t("removed.tryAgainLabel", { course: name })}
+                >
+                  {t("removed.tryAgain")}
+                </ActionButton>
+                <ConfirmButton
+                  label={t("removed.deletePermanently")}
+                  title={t("removed.confirmPermanentTitle", { course: name })}
+                  body={t("removed.confirmPermanentBody")}
+                  busy={busy}
+                  onConfirm={() =>
+                    purgeIt(
+                      true,
+                      t("removed.deletedPermanently", { course: name }),
+                      t("removed.stillPending", { course: name }),
+                    )
+                  }
+                />
+              </>
             ) : null}
             <ActionButton onClick={() => void restoreIt()} busy={busy}>
               {t("removed.restore")}
             </ActionButton>
-            <ConfirmButton
-              label={t("removed.forget")}
-              title={t("removed.confirmForgetTitle", { course: name })}
-              body={t("removed.confirmForgetBody")}
-              busy={busy}
-              onConfirm={() =>
-                run(
-                  () => forget.mutateAsync({ removedId: course.removed_id }),
-                  t("removed.forgotten", { course: name }),
-                  true,
-                )
-              }
-            />
+            {/* Forgetting waits until the files are in the Trash or deleted (Invalid before). */}
+            {course.files_pending ? null : (
+              <ConfirmButton
+                label={t("removed.forget")}
+                title={t("removed.confirmForgetTitle", { course: name })}
+                body={t("removed.confirmForgetBody")}
+                busy={busy}
+                onConfirm={() =>
+                  run(
+                    () => forget.mutateAsync({ removedId: course.removed_id }),
+                    t("removed.forgotten", { course: name }),
+                    true,
+                  )
+                }
+              />
+            )}
           </>
+        ) : stuck ? (
+          <ActionButton onClick={() => void restoreIt()} busy={busy}>
+            {t("removed.restoreAgain")}
+          </ActionButton>
         ) : null}
       </div>
     </li>
@@ -201,16 +239,20 @@ function RemovedRow({ course, onGone }: { course: RemovedCourse; onGone: () => v
 function ActionButton({
   onClick,
   busy,
+  label,
   children,
 }: {
   onClick: () => void;
   busy: boolean;
+  /** An accessible name that starts with the visible text and says which course. */
+  label?: string;
   children: ReactNode;
 }) {
   return (
     <Button
       size="sm"
       variant="outline"
+      aria-label={label}
       aria-disabled={busy || undefined}
       className="aria-disabled:opacity-50"
       onClick={() => {

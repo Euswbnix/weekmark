@@ -261,7 +261,8 @@ fn smoke_folder_is_fully_indexed() {
 }
 
 /// While an update installs (`updates_install` holds the gate), nothing the restart would kill
-/// can start: no sync, no file download, no model run. Afterwards they run again.
+/// can start: no sync, no file download, no model run, no course removal, restore or purge.
+/// Afterwards they run again.
 #[test]
 fn no_sync_starts_while_an_update_installs() {
     let data = tempfile::tempdir().expect("data dir");
@@ -338,4 +339,54 @@ fn no_sync_starts_while_an_update_installs() {
         json!({ "req": {}, "onEvent": "__CHANNEL__:0" }),
     );
     assert_eq!(summary["ok"], true, "sync failed: {summary}");
+
+    // Removals move files and a restore syncs: refused too, and nothing changes.
+    let remove = |course: &str| {
+        json!({
+            "courses": [course],
+            "options": {
+                "reason": null,
+                "keep_downloaded_files": false,
+                "purge_now": false,
+                "delete_pre_update_backup": false,
+            },
+        })
+    };
+    let report = ok(&webview, "remove_courses", remove("DEMO101"));
+    let removed_id = report["removed"][0]["removed_id"]
+        .as_str()
+        .expect("removed id")
+        .to_string();
+    let gate = backend.hold_work_for_install().expect("no install yet");
+    for (cmd, args) in [
+        ("remove_courses", remove("DEMO205")),
+        ("restore_course", json!({ "removedId": removed_id })),
+        (
+            "purge_removed_courses",
+            json!({ "removedIds": [removed_id], "permanentIfNoTrash": false }),
+        ),
+    ] {
+        let err = invoke(&webview, cmd, args).expect_err(cmd);
+        assert_eq!(err["kind"], "busy", "`{cmd}`: {err}");
+    }
+    let codes: Vec<Value> = ok(&webview, "list_courses", json!({}))
+        .as_array()
+        .expect("course list")
+        .iter()
+        .map(|summary| summary["course"]["code"].clone())
+        .collect();
+    assert_eq!(
+        codes,
+        [json!("DEMO205")],
+        "DEMO205 kept, DEMO101 still removed"
+    );
+    let removed = ok(&webview, "removed_courses", json!({}));
+    assert_eq!(removed[0]["state"], "pending", "not purged: {removed}");
+    drop(gate);
+    let restored = ok(
+        &webview,
+        "restore_course",
+        json!({ "removedId": removed_id }),
+    );
+    assert_eq!(restored["restored"], true, "{restored}");
 }

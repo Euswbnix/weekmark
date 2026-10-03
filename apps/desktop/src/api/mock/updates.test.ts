@@ -28,7 +28,8 @@ describe("mock updates", () => {
   it("shows upgraders 'What's new' first and only then makes a check due", async () => {
     const api = createMockApi({ ...fast, scenario: "upgrader" });
     const first = await api.startupTasks();
-    expect(first.whats_new?.topics).toEqual(["update_check", "course_weeks"]);
+    // From alpha.0: every topic since, the update check first (the facade's table).
+    expect(first.whats_new?.topics).toEqual(["update_check", "course_weeks", "course_removal"]);
     expect(first.whats_new?.since).toBe("0.3.0-alpha.0");
     expect(first.update_check_due).toBe(false);
     await api.acknowledgeWhatsNew();

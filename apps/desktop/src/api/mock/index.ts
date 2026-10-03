@@ -56,6 +56,7 @@ import {
 } from "./fixtures";
 import { createProposalsMock } from "./proposals";
 import { createLifecycleMock } from "./removal";
+import { whatsNewSince } from "./whatsNew";
 
 export { MOCK_SCENARIOS, type MockScenario } from "./fixtures";
 
@@ -903,13 +904,10 @@ export function createMockApi(options: MockOptions = {}): PageLampApi {
       respond(() => {
         const last = updates.lastCheck ? Date.parse(updates.lastCheck.at) : null;
         return {
+          // 0.1 never recorded its version, so upgraders from it have none.
           whats_new: updates.whatsNewSeen
             ? null
-            : {
-                // 0.1 never recorded its version, so upgraders from it have none.
-                since: scenario === "upgrader" ? MOCK_PREVIOUS_VERSION : null,
-                topics: ["update_check" as const, "course_weeks" as const],
-              },
+            : whatsNewSince(scenario === "upgrader" ? MOCK_PREVIOUS_VERSION : null),
           update_check_due:
             updates.prefs.auto_check &&
             updates.disclosureSeen &&
@@ -966,6 +964,8 @@ export function createMockApi(options: MockOptions = {}): PageLampApi {
                 { kind: "timed_out" as const, count: 1 },
               ]
             : [],
+          enrollment_window_terms: 0,
+          removals_waiting: 0,
         };
       }),
     lastCrash: () => respond(() => db.lastCrash),

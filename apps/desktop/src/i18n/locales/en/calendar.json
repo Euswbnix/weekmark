@@ -209,6 +209,7 @@
     "dates_agree": "Agrees with {{source}}: week 1 is the week of {{monday}}",
     "dates_may_be_wrong": "According to {{source}}, week 1 is the week of {{monday}}, {{days}} days away. These dates may be wrong — check them.",
     "session_window": "Session {{session}} ({{section}}) runs within {{start}} – {{end}}",
+    "institution_calendar_missing": "The school calendar in this version has no dates for session {{session}}: only its months bound the course",
     "session_window_no_section": "Session {{session}} runs within {{start}} – {{end}}",
     "week_from_dates": "Week 1 started the week of {{monday}} → week {{week}}",
     "week_from_module_unlock": "Module “{{title}}” unlocked {{date}} → week {{week}}",

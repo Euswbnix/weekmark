@@ -23,7 +23,7 @@ use crate::dates::course_date;
 use crate::ingest::sha256_hex;
 use crate::model::{Course, EventKind};
 use crate::store::Store;
-use crate::term::CoursePhase;
+use crate::term::{BreakKind, CoursePhase};
 use crate::views::{AsOf, CourseData};
 
 /// What every reader of one course's calendar shares.
@@ -108,6 +108,13 @@ pub fn reading_inputs(
                 .observations
                 .iter()
                 .map(|o| (o.day, o.week))
+                .collect(),
+            school_reading_weeks: resolved
+                .institution
+                .iter()
+                .flat_map(|term| &term.breaks)
+                .filter(|b| b.kind == BreakKind::ReadingWeek)
+                .map(|b| b.span)
                 .collect(),
         },
         current_week: timeline.current_week,

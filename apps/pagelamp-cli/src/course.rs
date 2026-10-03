@@ -1,9 +1,9 @@
-//! `pagelamp courses`, `course timeline` and `course keep`: course weeks, phases and the
-//! Past group (docs/design/v0.3-course-calendar.md §7.13). Every default and grouping comes
+//! `pagelamp courses`, `course timeline`, `course keep` and removing courses (`course remove`,
+//! `removed`, `restore`, `purge`, `forget`): course weeks, phases, the Past group and removal (docs/design/v0.3-course-calendar.md §7.13). Every default and grouping comes
 //! from the facade; this module only renders.
 
 use chrono::NaiveDate;
-use pagelamp_app::App;
+use pagelamp_app::{App, RemoveOptions, RestoreFailure, TombstoneState};
 use pagelamp_core::model::{
     CalendarOrigin, Confidence, CourseGroup, CourseLifecycle, CoursePhase, CourseTimeline,
     EvidenceItem, LifecycleState, TermAnchorSource,
@@ -200,11 +200,15 @@ pub fn timeline(app: &App, course: &str, json: bool) -> anyhow::Result<()> {
         week_label(timeline, lifecycle),
         confidence(timeline.phase_confidence)
     );
-    // No removal hint: this version can't remove a course (`--json` keeps `suggest_removal`).
     println!(
-        "  Lifecycle: {} ({})",
+        "  Lifecycle: {} ({}){}",
         lifecycle.state.as_str(),
-        confidence(lifecycle.confidence)
+        confidence(lifecycle.confidence),
+        if lifecycle.suggest_removal {
+            " — suggested for removal"
+        } else {
+            ""
+        }
     );
     println!("  Dates:     {}", dates_used(timeline));
     if let Some(label) = &timeline.term.ai_label {
@@ -302,6 +306,156 @@ pub fn keep(
             course.display_name(),
             lifecycle.state.as_str()
         ),
+    }
+    Ok(())
+}
+
+/// `pagelamp course remove <courses…> [--dry-run] [--now] [--keep-files] [--delete-backup]`
+pub async fn remove(
+    app: &App,
+    courses: Vec<String>,
+    dry_run: bool,
+    options: RemoveOptions,
+    json: bool,
+) -> anyhow::Result<()> {
+    if dry_run {
+        let preview = app.removal_preview(courses)?;
+        if json {
+            return print_json(&preview);
+        }
+        for item in &preview.items {
+            let label = item.code.as_deref().unwrap_or(&item.name);
+            println!(
+                "{label} — {} materials, {} deadlines",
+                item.materials, item.deadlines
+            );
+            if item.downloaded_files > 0 {
+                println!(
+                    "  {} downloaded files ({} KB) go to the Trash (--keep-files keeps them)",
+                    item.downloaded_files,
+                    item.downloaded_bytes.div_ceil(1024)
+                );
+            }
+            if item.own_folder_untouched {
+                println!("  Your folder isn't changed; PageLamp stops reading it.");
+            }
+            if item.custom_settings {
+                println!("  Your settings for it are kept for a restore.");
+            }
+            if item.cannot_sync_again {
+                println!("  Canvas restricts this course: it can't be synced again.");
+            }
+        }
+        if let Some(backup) = &preview.backup {
+            println!(
+                "The pre-update backup ({} days old) still holds their text{}.",
+                backup.age_days,
+                if backup.delete_by_default {
+                    "; consider --delete-backup"
+                } else {
+                    ": keep it until you know the update works"
+                }
+            );
+        }
+        return Ok(());
+    }
+    let report = app.remove_courses(courses, options).await?;
+    if json {
+        return print_json(&report);
+    }
+    for removed in &report.removed {
+        let label = removed.code.as_deref().unwrap_or(&removed.name);
+        match removed.purge_in_days {
+            Some(days) if !report.purged_now => println!(
+                "Removed {label}. Its data is deleted in {days} days; undo with `{} course restore \"{}\"`.",
+                pagelamp_core::brand::CLI_NAME,
+                removed.removed_id
+            ),
+            _ => println!("Deleted {label}. Restoring it means syncing it again."),
+        }
+        if removed.files_pending {
+            println!("  Its downloaded files couldn't be moved to the Trash; they are kept.");
+        }
+    }
+    if report.backup_deleted {
+        println!("The pre-update backup was deleted.");
+    } else if report.backup_failed {
+        println!("The pre-update backup couldn't be deleted; it is still in the data folder.");
+    }
+    Ok(())
+}
+
+/// `pagelamp course removed`
+pub fn removed(app: &App, json: bool) -> anyhow::Result<()> {
+    let removed = app.removed_courses()?;
+    if json {
+        return print_json(&removed);
+    }
+    if removed.is_empty() {
+        println!("No removed courses.");
+    }
+    for course in &removed {
+        let label = course.code.as_deref().unwrap_or(&course.name);
+        let state = match (course.state, course.purge_in_days) {
+            (TombstoneState::Pending, Some(days)) => {
+                format!("deleted in {days} days (undo possible)")
+            }
+            (TombstoneState::Restoring, _) => "being restored".to_string(),
+            _ => "deleted; restoring means syncing again".to_string(),
+        };
+        let files = if course.files_pending {
+            "; downloaded files wait for the Trash"
+        } else {
+            ""
+        };
+        println!("{label} — {state}{files}  [{}]", course.removed_id);
+    }
+    Ok(())
+}
+
+/// `pagelamp course restore <removed id>`
+pub async fn restore(app: &App, removed_id: &str, json: bool) -> anyhow::Result<()> {
+    let outcome = app.restore_course(removed_id).await?;
+    if json {
+        return print_json(&outcome);
+    }
+    match (outcome.restored, outcome.failure) {
+        (true, _) => println!("Restored."),
+        (false, Some(RestoreFailure::Offline)) => println!("Not restored: you seem to be offline."),
+        (false, Some(RestoreFailure::AccessRestricted)) => {
+            println!("Not restored: Canvas restricts access to this course.")
+        }
+        (false, Some(RestoreFailure::NotListed)) => {
+            println!("Not restored: Canvas no longer lists this course.")
+        }
+        (false, _) => println!("Not restored: the sync didn't bring it back."),
+    }
+    Ok(())
+}
+
+/// `pagelamp course purge [<removed ids…>] [--permanent]`
+pub async fn purge(
+    app: &App,
+    removed_ids: Vec<String>,
+    permanent: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let ids = (!removed_ids.is_empty()).then_some(removed_ids);
+    let report = app.purge_removed_courses(ids, permanent).await?;
+    if json {
+        return print_json(&report);
+    }
+    println!("Deleted {} course(s).", report.purged.len());
+    if !report.files_pending.is_empty() {
+        println!(
+            "{} course(s)' downloaded files couldn't be moved to the Trash and are kept (--permanent deletes them).",
+            report.files_pending.len()
+        );
+    }
+    if report.backup_deleted {
+        println!("The pre-update backup was deleted.");
+    } else if report.backup_failed {
+        println!("The pre-update backup couldn't be deleted; it is still in the data folder.");
     }
     Ok(())
 }

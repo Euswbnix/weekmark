@@ -110,8 +110,9 @@ impl Backend {
             .map_err(|err| internal(format!("background task failed: {err}")))?
     }
 
-    /// `spawn` for work that `App::activity` lists (a sync, a download, a model run): refused
-    /// while an update installs.
+    /// `spawn` for work that `App::activity` lists (a sync, a download, a model run, and a
+    /// course removal, restore or purge, which hold `sync.lock`): refused while an update
+    /// installs.
     pub async fn spawn_work<T, F, Fut>(&self, f: F) -> Result<T, AppError>
     where
         T: Send + 'static,

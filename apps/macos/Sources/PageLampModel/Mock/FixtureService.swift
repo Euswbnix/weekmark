@@ -91,7 +91,8 @@ public struct FixtureService: ForwardingService {
             id: course.id, sourceId: course.sourceId, externalId: course.externalId, code: course.code,
             name: course.name, termStart: course.termStart, termEnd: course.termEnd, termSource: course.termSource,
             url: course.url, aiPolicy: course.aiPolicy, aiPolicyNote: course.aiPolicyNote, aiAccess: false,
-            hidden: course.hidden, enrollmentActive: course.enrollmentActive, updatedAt: course.updatedAt
+            materialSharing: course.materialSharing, hidden: course.hidden, enrollmentActive: course.enrollmentActive,
+            updatedAt: course.updatedAt
         )
     }
 

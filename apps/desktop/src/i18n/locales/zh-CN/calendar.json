@@ -209,6 +209,7 @@
     "dates_agree": "与{{source}}一致：第 1 周是 {{monday}} 那一周",
     "dates_may_be_wrong": "根据{{source}}，第 1 周是 {{monday}} 那一周，相差 {{days}} 天。这些日期可能有误，请检查。",
     "session_window": "{{session}} 学期（{{section}}）在 {{start}} – {{end}} 之间",
+    "institution_calendar_missing": "此版本的校历里没有 {{session}} 学期的日期：只用学期月份来界定课程范围",
     "session_window_no_section": "{{session}} 学期在 {{start}} – {{end}} 之间",
     "week_from_dates": "第 1 周从 {{monday}} 那一周开始 → 第 {{week}} 周",
     "week_from_module_unlock": "模块“{{title}}”于 {{date}} 解锁 → 第 {{week}} 周",

@@ -220,6 +220,7 @@ struct MockFixtures {
             aiPolicy: spec.policy,
             aiPolicyNote: spec.policyNote,
             aiAccess: spec.aiAccess,
+            materialSharing: .unanswered,
             hidden: spec.hidden,
             enrollmentActive: spec.enrollmentActive,
             updatedAt: at(-1, 9)

@@ -4,7 +4,7 @@ import { Separator } from "@/components/ui/separator";
 import { CALENDAR_UI } from "../proposals/availability";
 import { ProposalsSection } from "../proposals/ProposalsSection";
 import { SyllabusSection } from "../proposals/SyllabusSection";
-import { REMOVAL_UI } from "../removal/availability";
+import { DATES_V2_UI } from "./availability";
 import { CheckDatesPrompt } from "./CheckDatesPrompt";
 import { CourseDatesForm } from "./CourseDatesForm";
 import { TermDatesForm } from "./TermDatesForm";
@@ -63,7 +63,7 @@ export function TimelineTab({
       <Separator />
 
       {/* Form v2 (breaks, exams, second part) needs set_course_dates (alpha.2). */}
-      {REMOVAL_UI ? (
+      {DATES_V2_UI ? (
         <CourseDatesForm course={course} timeline={timeline} startRef={startRef} />
       ) : (
         <TermDatesForm course={course} timeline={timeline} startRef={startRef} />

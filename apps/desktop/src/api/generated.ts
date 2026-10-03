@@ -28,7 +28,8 @@ export type BackendRef =
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
  * via the `definition` "CostKind".
  */
-export type CostKind = "free_on_device" | "api_billing" | "plan_credits" | "cloud_via_local";
+export type CostKind =
+  "free_on_device" | "api_billing" | "plan_credits" | "cloud_via_local" | "self_hosted";
 /**
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
  * via the `definition` "RetentionFact".
@@ -499,6 +500,11 @@ export type EventKind =
  */
 export type ProcessKind = "app" | "mcp";
 /**
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "LocalServerKind".
+ */
+export type LocalServerKind = "ollama" | "lm_studio";
+/**
  * Whether the extraction worker (`pagelamp extract-worker`, v0.3 M0.5) works.
  *
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
@@ -572,6 +578,7 @@ export type EvidenceCode =
   | "dates_agree"
   | "dates_may_be_wrong"
   | "session_window"
+  | "institution_calendar_missing"
   | "week_from_dates"
   | "week_from_module_unlock"
   | "week_from_recent_materials"
@@ -624,11 +631,6 @@ export type EvidenceSignal = ("module_unlock" | "recent_materials" | "latest_mat
  * via the `definition` "LeftOutReason".
  */
 export type LeftOutReason = ("external_link" | "no_text") | "looks_like_assessment" | "over_budget";
-/**
- * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
- * via the `definition` "LocalServerKind".
- */
-export type LocalServerKind = "ollama" | "lm_studio";
 /**
  * The student's answer to "May this course's materials be shared with an AI service?"
  * (design §4.1, question (b); `courses.material_sharing`, schema v4). Only `not_allowed` stops
@@ -721,7 +723,7 @@ export type SnoozeKind = "not_now" | "keep";
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
  * via the `definition` "WhatsNewTopic".
  */
-export type WhatsNewTopic = "update_check" | "course_weeks";
+export type WhatsNewTopic = "update_check" | "course_weeks" | "course_removal";
 /**
  * Progress stream of a sync run (desktop forwards these through a `tauri::ipc::Channel`).
  *
@@ -1136,6 +1138,10 @@ export interface StoreCounts {
   indexed_materials: number;
   materials: number;
   modules: number;
+  /**
+   * Courses under "Removed courses" (their tombstones), not counted above.
+   */
+  removed_courses: number;
   study_plans: number;
 }
 /**
@@ -1667,6 +1673,12 @@ export interface Course {
   external_id: string;
   hidden: boolean;
   id: string;
+  /**
+   * The student's answer to "May this course's materials be shared with an AI service?"
+   * (question (b)). Only `not_allowed` keeps material text from cloud models PageLamp runs
+   * itself; the student's own AI app over MCP is unaffected.
+   */
+  material_sharing: "unanswered" | "allowed" | "not_sure" | "not_allowed";
   name: string;
   source_id: string;
   term_end?: string | null;
@@ -2043,6 +2055,7 @@ export interface CrashReport {
  * via the `definition` "DoctorReport".
  */
 export interface DoctorReport {
+  ai?: AiDoctor;
   arch: string;
   courses: number;
   /**
@@ -2053,6 +2066,11 @@ export interface DoctorReport {
    * Why the database could not be read (then the counts are 0).
    */
   database_error?: string | null;
+  /**
+   * Courses whose LMS term looks like an enrollment window, so it isn't used to count weeks
+   * (calendar design §6.3). A count, never names.
+   */
+  enrollment_window_terms?: number;
   events: number;
   extract_worker: ExtractWorkerCheck;
   hidden_courses: number;
@@ -2063,6 +2081,11 @@ export interface DoctorReport {
   materials: number;
   mcp_clients: McpClientPresence;
   os: string;
+  /**
+   * Removed courses still waiting: for their purge (the undo window) or for their downloaded
+   * files to go to the Trash (calendar design §8.3). A count, never names.
+   */
+  removals_waiting?: number;
   schema_version?: number | null;
   sources: DoctorSource[];
   /**
@@ -2071,6 +2094,50 @@ export interface DoctorReport {
    */
   unreadable_files: UnreadableFiles[];
   version: string;
+}
+/**
+ * Models PageLamp calls itself: keys present (never the keys), local servers running.
+ */
+export interface AiDoctor {
+  /**
+   * Ollama and LM Studio at their usual addresses on this computer.
+   */
+  local_servers: LocalServer[];
+  /**
+   * The providers the student added.
+   */
+  providers: AiProviderCheck[];
+}
+/**
+ * A local model server found on this computer.
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "LocalServer".
+ */
+export interface LocalServer {
+  base_url: string;
+  kind: LocalServerKind;
+  running: boolean;
+}
+/**
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "AiProviderCheck".
+ */
+export interface AiProviderCheck {
+  /**
+   * Whether its key is in the keychain (`None`: it needs none).
+   */
+  key_present?: boolean | null;
+  on_device: boolean;
+  /**
+   * The kind of provider (`openai`, `ollama`, `custom`, …).
+   */
+  preset: string;
+  /**
+   * On this computer: whether its server accepts connections (`None`: not on this
+   * computer, so not contacted).
+   */
+  reachable?: boolean | null;
 }
 /**
  * `doctor`'s check of the extraction worker: it is started once.
@@ -2219,17 +2286,6 @@ export interface CourseLifecycleEntry {
   hidden: boolean;
   lifecycle: CourseLifecycle;
   name: string;
-}
-/**
- * A local model server found on this computer.
- *
- * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
- * via the `definition` "LocalServer".
- */
-export interface LocalServer {
-  base_url: string;
-  kind: LocalServerKind;
-  running: boolean;
 }
 /**
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
@@ -2381,6 +2437,14 @@ export interface DisclosureFacts1 {
  */
 export interface PurgeReport {
   /**
+   * A purged course asked for the pre-update backup to go, and it did.
+   */
+  backup_deleted: boolean;
+  /**
+   * Deleting the pre-update backup failed (the purge went ahead).
+   */
+  backup_failed: boolean;
+  /**
    * `removed_id`s whose files couldn't be moved to the Trash (kept; retried later).
    */
   files_pending: string[];
@@ -2462,7 +2526,14 @@ export interface RemovalPreviewItem {
  * via the `definition` "RemovalReport".
  */
 export interface RemovalReport {
+  /**
+   * The pre-update backup was deleted now (`purge_now`; otherwise it goes with the purge).
+   */
   backup_deleted: boolean;
+  /**
+   * Deleting the pre-update backup failed (the courses are removed all the same).
+   */
+  backup_failed: boolean;
   purged_now: boolean;
   removed: RemovedCourse[];
 }
@@ -2521,6 +2592,9 @@ export interface RemoveAiDataReport {
  * via the `definition` "RemoveOptions".
  */
 export interface RemoveOptions {
+  /**
+   * Delete the pre-update backup with the purge (at once with `purge_now`); an undo keeps it.
+   */
   delete_pre_update_backup: boolean;
   keep_downloaded_files: boolean;
   /**
@@ -2842,6 +2916,24 @@ export interface WeekMaterials {
    * The week actually shown (None when no week could be determined; see `note`).
    */
   week?: number | null;
+}
+/**
+ * `doctor`'s AI facts (M1): whether keys are there — never a key — and whether the model
+ * servers on this computer answer. No provider address or id: doctor output is shared in
+ * issues, and an address can name a school's server.
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "AiDoctor".
+ */
+export interface AiDoctor1 {
+  /**
+   * Ollama and LM Studio at their usual addresses on this computer.
+   */
+  local_servers: LocalServer[];
+  /**
+   * The providers the student added.
+   */
+  providers: AiProviderCheck[];
 }
 /**
  * The dates that count the course's weeks, and the dates that were not used (design §3.3).

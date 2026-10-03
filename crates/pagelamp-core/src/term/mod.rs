@@ -7,6 +7,7 @@
 
 pub mod evidence;
 pub(crate) mod fit;
+pub mod institution;
 pub mod phase;
 mod resolve;
 pub mod session;
@@ -136,6 +137,15 @@ pub struct RejectedDates {
     pub reason: RejectReason,
     /// True when only the end was not used (the start still counts weeks).
     pub end_only: bool,
+}
+
+impl RejectedDates {
+    /// An LMS term too long to be a teaching term: an enrollment window like UofT's May–January
+    /// "Fall 2026" (calendar design §6.3), never used to count weeks.
+    pub fn is_enrollment_window(&self) -> bool {
+        self.source == TermAnchorSource::LmsTerm
+            && self.reason == RejectReason::LongerThanTeachingTerm
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]

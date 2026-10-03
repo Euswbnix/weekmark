@@ -145,8 +145,13 @@ export function RemoveCoursesDialog({
   function announce(report: RemovalReport) {
     const count = report.removed.length;
     const course = report.removed[0]?.code ?? report.removed[0]?.name ?? "";
+    // The courses are removed either way; a backup that wouldn't go stays in the data folder.
+    if (report.backup_failed) toast.warning(t("toast.backupFailed"));
     if (report.purged_now) {
-      toast.success(t("toast.deleted", { count, course }));
+      // The data is gone either way; files the Trash refused wait in "Removed courses".
+      if (report.removed.some((r) => r.files_pending))
+        toast.warning(t("toast.deletedFilesPending"));
+      else toast.success(t("toast.deleted", { count, course }));
       return;
     }
     const removedIds = report.removed.map((r) => r.removed_id);
@@ -182,7 +187,7 @@ export function RemoveCoursesDialog({
             <legend id={ids.list} className="mb-2 text-sm font-medium">
               {t("dialog.listLabel")}
             </legend>
-            <ul className="space-y-2">
+            <ul className="divide-y border-y">
               {rows.map((entry) => (
                 <CandidateRow
                   key={entry.course_id}
@@ -230,6 +235,7 @@ export function RemoveCoursesDialog({
                   ? t("dialog.backupOld", { days: backup.age_days })
                   : t("dialog.backupRecent", { days: backup.age_days })
               }
+              note={t("dialog.backupWithData")}
             />
           ) : null}
         </fieldset>
@@ -279,7 +285,7 @@ function CandidateRow({
   const id = useId();
   const name = entry.code ?? entry.name;
   return (
-    <li className="flex items-start gap-3 rounded-lg p-2 ring-1 ring-foreground/10">
+    <li className="flex items-start gap-3 py-2.5">
       <Checkbox
         id={id}
         checked={checked}
@@ -359,7 +365,7 @@ function PreviewDetails({ preview, loading }: { preview?: RemovalPreview; loadin
   const folders = preview.items.some((i) => i.own_folder_untouched);
 
   return (
-    <div className="space-y-3 text-sm">
+    <div className="pl-callout space-y-3 px-3 py-2.5 text-sm">
       <Section title={t("dialog.deletedTitle")}>
         <ul className="list-disc space-y-0.5 pl-5">
           {deleted.map((line) => (
@@ -407,11 +413,14 @@ function Option({
   onCheckedChange,
   label,
   hint,
+  note,
 }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   label: string;
   hint: string;
+  /** A second line under the hint, read with it. */
+  note?: string;
 }) {
   const id = useId();
   return (
@@ -420,7 +429,7 @@ function Option({
         id={id}
         checked={checked}
         onCheckedChange={(value) => onCheckedChange(value === true)}
-        aria-describedby={`${id}-hint`}
+        aria-describedby={note ? `${id}-hint ${id}-note` : `${id}-hint`}
         className="mt-0.5"
       />
       <div className="space-y-0.5">
@@ -428,6 +437,11 @@ function Option({
         <p id={`${id}-hint`} className="text-xs text-muted-foreground">
           {hint}
         </p>
+        {note ? (
+          <p id={`${id}-note`} className="text-xs text-muted-foreground">
+            {note}
+          </p>
+        ) : null}
       </div>
     </div>
   );

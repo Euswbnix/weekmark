@@ -203,7 +203,8 @@ func thisWeekSummary(
         course: Course(
             id: "folder:test/course/\(code)", sourceId: "folder:test", externalId: code, code: code, name: name,
             termStart: nil, termEnd: nil, termSource: .none, url: nil, aiPolicy: policy, aiPolicyNote: nil,
-            aiAccess: materials != .turnedOff, hidden: hidden, enrollmentActive: active, updatedAt: TestClock.now
+            aiAccess: materials != .turnedOff, materialSharing: .unanswered, hidden: hidden, enrollmentActive: active,
+            updatedAt: TestClock.now
         ),
         aiMaterials: materials,
         timeline: thisWeekTimeline(week: week),

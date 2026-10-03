@@ -19,8 +19,10 @@ use pagelamp_core::model::{
     TextErrorKind, Timestamp,
 };
 use pagelamp_core::paths;
+use pagelamp_core::removal::TombstoneState;
 use pagelamp_core::secrets::{KeychainSecrets, SecretBackend};
 use pagelamp_core::store::Store;
+use pagelamp_core::views::AsOf;
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -113,6 +115,17 @@ pub struct DoctorReport {
     /// Files the extraction worker could not read, per reason (reasons without files left
     /// out; empty when the database can't be read).
     pub unreadable_files: Vec<UnreadableFiles>,
+    /// Models PageLamp calls itself: keys present (never the keys), local servers running.
+    #[serde(default)]
+    pub ai: crate::ai::AiDoctor,
+    /// Courses whose LMS term looks like an enrollment window, so it isn't used to count weeks
+    /// (calendar design §6.3). A count, never names.
+    #[serde(default)]
+    pub enrollment_window_terms: u32,
+    /// Removed courses still waiting: for their purge (the undo window) or for their downloaded
+    /// files to go to the Trash (calendar design §8.3). A count, never names.
+    #[serde(default)]
+    pub removals_waiting: u32,
 }
 
 fn data_dir() -> Result<PathBuf> {
@@ -199,6 +212,9 @@ pub(crate) fn doctor_in(
         last_crash: core_diag::last_crash(data_dir).ok().flatten(),
         extract_worker: check_extract_worker(worker),
         unreadable_files: Vec::new(),
+        ai: crate::ai::AiDoctor::default(),
+        enrollment_window_terms: 0,
+        removals_waiting: 0,
     };
     let db = paths::db_path_in(data_dir);
     let read = Store::open_read_only(&db).and_then(|store| {
@@ -207,10 +223,13 @@ pub(crate) fn doctor_in(
             store.counts()?,
             store.list_sources()?,
             store.unreadable_file_counts()?,
+            course_notes(&store)?,
         ))
     });
     match read {
-        Ok((version, counts, sources, unreadable)) => {
+        Ok((version, counts, sources, unreadable, (enrollment_window_terms, removals_waiting))) => {
+            report.enrollment_window_terms = enrollment_window_terms;
+            report.removals_waiting = removals_waiting;
             report.unreadable_files = unreadable
                 .into_iter()
                 .map(|(kind, count)| UnreadableFiles { kind, count })
@@ -232,7 +251,34 @@ pub(crate) fn doctor_in(
         }
         Err(err) => report.database_error = Some(core_diag::redact(&err.to_string())),
     }
+    report.ai = crate::ai::doctor_checks(Store::open_read_only(&db).ok().as_ref(), secrets);
     report
+}
+
+/// How many courses have an enrollment-window term (`RejectedDates::is_enrollment_window`; hidden
+/// courses included, removed ones not), and how many removed courses still wait for their purge
+/// or their files' move to the Trash.
+fn course_notes(store: &Store) -> pagelamp_core::Result<(u32, u32)> {
+    let windows = pagelamp_core::views::list_courses(store, true, AsOf::now_local())?
+        .iter()
+        .filter(|summary| {
+            summary
+                .timeline
+                .term
+                .not_used
+                .iter()
+                .any(|rejected| rejected.is_enrollment_window())
+        })
+        .count();
+    let waiting = store
+        .tombstones()?
+        .iter()
+        .filter(|tombstone| tombstone.state == TombstoneState::Pending || tombstone.files_pending)
+        .count();
+    Ok((
+        u32::try_from(windows).unwrap_or(u32::MAX),
+        u32::try_from(waiting).unwrap_or(u32::MAX),
+    ))
 }
 
 /// Start the extraction worker once (`pagelamp_extract::worker::check`).
@@ -254,6 +300,59 @@ fn check_extract_worker(worker: Option<&Path>) -> ExtractWorkerCheck {
         Err(_) => (ExtractWorkerStatus::Failed, None),
     };
     ExtractWorkerCheck { status, spawn_ms }
+}
+
+/// "openai (key present), ollama (on this computer, running)": the providers in one line.
+pub fn describe_ai_providers(ai: &crate::ai::AiDoctor) -> String {
+    if ai.providers.is_empty() {
+        return "none".to_string();
+    }
+    ai.providers
+        .iter()
+        .map(|p| {
+            let mut facts = Vec::new();
+            match p.key_present {
+                Some(true) => facts.push("key present"),
+                Some(false) => facts.push("key MISSING"),
+                None => {}
+            }
+            if p.on_device {
+                facts.push("on this computer");
+            }
+            match p.reachable {
+                Some(true) => facts.push("running"),
+                Some(false) => facts.push("not running"),
+                None => {}
+            }
+            format!("{} ({})", p.preset, facts.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// "Ollama running · LM Studio not running".
+pub fn describe_local_servers(ai: &crate::ai::AiDoctor) -> String {
+    if ai.local_servers.is_empty() {
+        return "not checked".to_string();
+    }
+    ai.local_servers
+        .iter()
+        .map(|server| {
+            format!(
+                "{} {}",
+                match server.kind {
+                    crate::ai::LocalServerKind::Ollama => "Ollama",
+                    crate::ai::LocalServerKind::LmStudio => "LM Studio",
+                },
+                if server.running {
+                    "running"
+                } else {
+                    "not running"
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// "ok (14 ms)", "could not start (spawn_failed; …)": the worker check in one line.
@@ -355,6 +454,18 @@ pub(crate) fn report_in(
         "- Courses: {} ({} hidden) · materials: {} · events: {}\n",
         doctor.courses, doctor.hidden_courses, doctor.materials, doctor.events
     ));
+    if doctor.enrollment_window_terms > 0 {
+        out.push_str(&format!(
+            "- Course terms not used to count weeks (they look like enrollment windows): {}\n",
+            doctor.enrollment_window_terms
+        ));
+    }
+    if doctor.removals_waiting > 0 {
+        out.push_str(&format!(
+            "- Removed courses waiting (for their purge or for files to go to the Trash): {}\n",
+            doctor.removals_waiting
+        ));
+    }
     out.push_str(&format!(
         "- Extraction worker: {}\n",
         describe_worker_check(&doctor.extract_worker)
@@ -365,6 +476,11 @@ pub(crate) fn report_in(
             describe_unreadable(&doctor.unreadable_files)
         ));
     }
+    out.push_str(&format!(
+        "- AI providers: {}\n- Local model servers: {}\n",
+        describe_ai_providers(&doctor.ai),
+        describe_local_servers(&doctor.ai)
+    ));
     out.push_str(&format!(
         "- AI apps configured: Claude Desktop {} · Claude Code {} · Codex {}\n",
         yes(doctor.mcp_clients.claude_desktop),
@@ -740,6 +856,84 @@ mod tests {
             .unwrap();
     }
 
+    /// The doctor note (calendar design §6.3, §8.3): counts of enrollment-window terms and of
+    /// removed courses still waiting, never their names; 0 when the database can't be read.
+    #[test]
+    fn doctor_counts_enrollment_window_terms_and_waiting_removals() {
+        let temp = tempfile::tempdir().unwrap();
+        seeded(temp.path());
+        let doctor = doctor_in(temp.path(), &MemorySecrets::new(), None);
+        assert_eq!(
+            (doctor.enrollment_window_terms, doctor.removals_waiting),
+            (0, 0)
+        );
+
+        let store = Store::open(&paths::db_path_in(temp.path())).unwrap();
+        store
+            .upsert_source(&SourceRecord {
+                id: "canvas:lms.example.edu".into(),
+                kind: SourceKind::Canvas,
+                label: "lms.example.edu".into(),
+                config: json!({ "base_url": "https://lms.example.edu" }),
+                last_synced_at: None,
+                last_error: None,
+                last_error_kind: None,
+            })
+            .unwrap();
+        let date = |text: &str| NaiveDate::parse_from_str(text, "%Y-%m-%d").ok();
+        for (external, name) in [("404", "Demo Methods"), ("505", "Demo Seminar")] {
+            store
+                .upsert_course(&CourseUpsert {
+                    id: format!("canvas:lms.example.edu/course/{external}"),
+                    source_id: "canvas:lms.example.edu".into(),
+                    external_id: external.into(),
+                    code: Some(format!("DEMO{external}")),
+                    name: name.into(),
+                    term_start: date("2026-05-04"),
+                    term_end: date("2027-01-31"),
+                    url: None,
+                    syllabus_text: None,
+                    // A UofT-like "Fall 2026" term (CAL-1): May to January.
+                    lms: LmsCourseInfo {
+                        term_name: Some("Fall 2026".into()),
+                        term_start: date("2026-05-04"),
+                        term_end: date("2027-01-31"),
+                        ..LmsCourseInfo::default()
+                    },
+                })
+                .unwrap();
+        }
+        store
+            .set_course_hidden("canvas:lms.example.edu/course/404", true)
+            .unwrap();
+        store
+            .remove_course(
+                "canvas:lms.example.edu/course/505",
+                pagelamp_core::removal::RemovalReason::Ended,
+                false,
+                false,
+                chrono::Utc::now(),
+            )
+            .unwrap();
+        let doctor = doctor_in(temp.path(), &MemorySecrets::new(), None);
+        // The hidden course counts; the removed one is gone from every list.
+        assert_eq!(doctor.enrollment_window_terms, 1);
+        assert_eq!(doctor.removals_waiting, 1);
+        let text = report_in(temp.path(), &MemorySecrets::new(), None);
+        assert!(text.contains("look like enrollment windows): 1"), "{text}");
+        assert!(text.contains("for files to go to the Trash): 1"), "{text}");
+        assert!(!text.contains("Demo Methods") && !text.contains("Demo Seminar"));
+
+        // An unreadable database: the counts stay 0.
+        std::fs::write(paths::db_path_in(temp.path()), b"not a database").unwrap();
+        let doctor = doctor_in(temp.path(), &MemorySecrets::new(), None);
+        assert!(doctor.database_error.is_some());
+        assert_eq!(
+            (doctor.enrollment_window_terms, doctor.removals_waiting),
+            (0, 0)
+        );
+    }
+
     #[test]
     fn doctor_reports_facts_but_no_urls_ids_or_labels() {
         let temp = tempfile::tempdir().unwrap();
@@ -823,7 +1017,8 @@ mod tests {
             .lines()
             .find(|l| l.starts_with("- Last database update:"))
             .unwrap_or_else(|| panic!("no update line:\n{report}"));
-        assert!(line.contains("schema 2 → 3"), "{line}");
+        let expected = format!("schema 2 → {}", pagelamp_core::store::SCHEMA_VERSION);
+        assert!(line.contains(&expected), "{line}");
         assert!(line.ends_with("backup ok"), "{line}");
         assert!(
             !report.contains(".bak"),

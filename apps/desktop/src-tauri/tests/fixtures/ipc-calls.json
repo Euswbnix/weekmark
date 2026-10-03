@@ -227,6 +227,60 @@
     }
   },
   {
+    "cmd": "removal_preview",
+    "args": {
+      "courses": [
+        "folder:contract-test/course/DEMO101"
+      ]
+    }
+  },
+  {
+    "cmd": "remove_courses",
+    "args": {
+      "courses": [
+        "folder:contract-test/course/DEMO101"
+      ],
+      "options": {
+        "reason": null,
+        "keep_downloaded_files": false,
+        "purge_now": false,
+        "delete_pre_update_backup": false
+      }
+    }
+  },
+  {
+    "cmd": "removed_courses",
+    "args": {}
+  },
+  {
+    "cmd": "restore_course",
+    "args": {
+      "removedId": "contract-test-removed"
+    }
+  },
+  {
+    "cmd": "purge_removed_courses",
+    "args": {
+      "removedIds": [
+        "contract-test-removed"
+      ],
+      "permanentIfNoTrash": false
+    }
+  },
+  {
+    "cmd": "purge_removed_courses",
+    "args": {
+      "removedIds": null,
+      "permanentIfNoTrash": false
+    }
+  },
+  {
+    "cmd": "forget_removed_course",
+    "args": {
+      "removedId": "contract-test-removed"
+    }
+  },
+  {
     "cmd": "course_calendar",
     "args": {
       "course": "folder:contract-test/course/DEMO101"

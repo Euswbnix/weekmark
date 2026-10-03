@@ -586,8 +586,9 @@ fn has_no_current_week(timeline: &CourseTimeline, lifecycle: &CourseLifecycle) -
 }
 
 /// Events with `when()` in [now - days_back, now + days_ahead], soonest first, optionally for
-/// one course. Without a course filter, events of hidden courses are excluded (events not
-/// linked to any course are kept). With a filter, `course` is resolved with
+/// one course. Without a course filter, events of hidden and removed courses are excluded;
+/// events not linked to any course are kept, except a feed's events naming a removed course's
+/// code (calendar design §8.3). With a filter, `course` is resolved with
 /// `include_hidden` (desktop: `true`, MCP: `false`).
 pub fn deadlines(
     store: &Store,
@@ -609,12 +610,29 @@ pub fn deadlines(
         .into_iter()
         .map(|c| (c.id.clone(), c))
         .collect();
+    let removed_codes: Vec<String> = store
+        .tombstones()?
+        .into_iter()
+        .filter_map(|t| t.code)
+        .collect();
     let mut result = Vec::new();
     for event in store.list_events(from, to, None)? {
-        let course = event.course_id.as_ref().and_then(|id| courses.get(id));
-        if course.is_some_and(|c| c.hidden) {
-            continue;
-        }
+        let course = match &event.course_id {
+            // A course that isn't listed was removed.
+            Some(id) => match courses.get(id) {
+                Some(course) if !course.hidden => Some(course),
+                _ => continue,
+            },
+            None => {
+                let names_removed = event.course_hint.as_deref().is_some_and(|hint| {
+                    removed_codes.iter().any(|code| hint_names_code(hint, code))
+                });
+                if names_removed {
+                    continue;
+                }
+                None
+            }
+        };
         result.push(deadline(&event, course));
     }
     Ok(result)
@@ -881,6 +899,7 @@ impl CourseData {
             materials: &self.materials,
             events: &self.events,
             today: at.today,
+            institution: None,
         }
     }
 

@@ -64,6 +64,10 @@
       "course_weeks": {
         "title": "Weeks and phases for every course",
         "body": "Each course shows its current week and phase, and finished courses move to “Past courses”."
+      },
+      "course_removal": {
+        "title": "Remove finished courses",
+        "body": "When a course is over, you can remove it from {{product}}. You can undo it for 7 days, and your own course folders are never touched."
       }
     }
   },

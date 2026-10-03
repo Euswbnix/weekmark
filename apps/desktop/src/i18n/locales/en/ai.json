@@ -73,7 +73,8 @@
       "api_billing": "billed to your API account",
       "plan_credits": "uses your ChatGPT plan (credits past its limit)",
       "free_on_device": "free",
-      "cloud_via_local": "runs in the cloud"
+      "cloud_via_local": "runs in the cloud",
+      "self_hosted": "cost set by whoever runs the server"
     }
   },
   "disclosure": {
@@ -117,7 +118,8 @@
       "api_billing": "Each run is billed to your API account. {{product}} shows an estimate before each run and keeps to a monthly budget you set.",
       "plan_credits": "Runs count toward your ChatGPT plan's usage limits. Past your plan limit, runs may use your ChatGPT credits.",
       "free_on_device": "Runs on this computer are free. They use its memory and battery.",
-      "cloud_via_local": "This model runs in the cloud through {{name}}, not on this computer. {{name}}'s terms and limits apply."
+      "cloud_via_local": "This model runs in the cloud through {{name}}, not on this computer. {{name}}'s terms and limits apply.",
+      "self_hosted": "Costs, if any, are set by whoever runs this server."
     },
     "age": {
       "heading": "Age",

@@ -79,7 +79,7 @@ describe("mock removal", () => {
   it("only forgets purged courses, and refuses to remove during a sync", async () => {
     const api = createMockApi({ ...fast, scenario: "removed" });
     const rows = await api.removedCourses();
-    expect(rows.map((r) => r.state).sort()).toEqual(["pending", "purged", "purged"]);
+    expect(rows.map((r) => r.state).sort()).toEqual(["pending", "purged", "purged", "restoring"]);
     const pending = rows.find((r) => r.state === "pending");
     const error = await api.forgetRemovedCourse(pending?.removed_id ?? "").catch((e) => e);
     expect(error.kind).toBe("invalid");
@@ -89,6 +89,50 @@ describe("mock removal", () => {
       .removeCourses(["canvas:canvas.demo.test/course/99"], removeOptions)
       .catch((e) => e);
     expect(refused.kind).toBe("busy");
+  });
+
+  it("keys a removal by its course id, like the facade", async () => {
+    const api = createMockApi({ ...fast, scenario: "phases" });
+    const { removed } = await api.removeCourses([ENDED], removeOptions);
+    expect(removed[0]?.removed_id).toBe(ENDED);
+  });
+
+  it("retries files waiting for the Trash with every due purge; only the flag deletes them", async () => {
+    const api = createMockApi({ ...fast, scenario: "removed" });
+    const waiting = (await api.removedCourses()).find((r) => r.files_pending);
+    const id = waiting?.removed_id ?? "";
+    let report = await api.purgeRemovedCourses(null, false);
+    expect(report.files_pending).toEqual([id]);
+    report = await api.purgeRemovedCourses([id], false);
+    expect(report.files_pending).toEqual([id]);
+    report = await api.purgeRemovedCourses([id], true);
+    expect(report.files_pending).toEqual([]);
+    expect((await api.removedCourses()).find((r) => r.removed_id === id)?.files_pending).toBe(
+      false,
+    );
+  });
+
+  it("follows the facade's rules for restoring, forgetting and the backup", async () => {
+    const api = createMockApi({ ...fast, scenario: "removed" });
+    const rows = await api.removedCourses();
+    const restoring = rows.find((r) => r.state === "restoring");
+    const waiting = rows.find((r) => r.files_pending);
+    // A purge skips a restore in progress, even when asked for by id.
+    const report = await api.purgeRemovedCourses([restoring?.removed_id ?? ""], false);
+    expect(report.purged).toEqual([]);
+    // Forgetting waits for the files.
+    const refused = await api.forgetRemovedCourse(waiting?.removed_id ?? "").catch((e) => e);
+    expect(refused.kind).toBe("invalid");
+
+    // The backup goes with the purge: not at removal, then with "Delete now".
+    const phases = createMockApi({ ...fast, scenario: "phases" });
+    const removal = await phases.removeCourses([ENDED], {
+      ...removeOptions,
+      delete_pre_update_backup: true,
+    });
+    expect(removal.backup_deleted).toBe(false);
+    const purge = await phases.purgeRemovedCourses([ENDED], false);
+    expect(purge.backup_deleted).toBe(true);
   });
 
   it("deletes a pending course's data now", async () => {

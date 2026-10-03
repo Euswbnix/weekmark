@@ -73,7 +73,8 @@
       "api_billing": "费用计入你的 API 账户",
       "plan_credits": "使用你的 ChatGPT 订阅（超出额度后消耗点数）",
       "free_on_device": "免费",
-      "cloud_via_local": "在云端运行"
+      "cloud_via_local": "在云端运行",
+      "self_hosted": "费用由运行该服务器的一方决定"
     }
   },
   "disclosure": {
@@ -117,7 +118,8 @@
       "api_billing": "每次运行的费用都计入你的 API 账户。{{product}} 会在每次运行前显示预估费用，并遵守你设定的每月预算。",
       "plan_credits": "每次运行都计入你 ChatGPT 订阅的用量限额；超出订阅额度后，运行可能会消耗你的 ChatGPT 额度点数。",
       "free_on_device": "在这台电脑上运行是免费的，但会占用它的内存和电量。",
-      "cloud_via_local": "这个模型通过 {{name}} 在云端运行，而不是在这台电脑上。适用 {{name}} 的条款和限额。"
+      "cloud_via_local": "这个模型通过 {{name}} 在云端运行，而不是在这台电脑上。适用 {{name}} 的条款和限额。",
+      "self_hosted": "如有费用，由运行这台服务器的一方决定。"
     },
     "age": {
       "heading": "年龄",

@@ -279,9 +279,29 @@ impl<T: CanvasTransport> Syncer<'_, T> {
             .iter()
             .filter_map(|c| Some((c, map::course(self.ids(), &self.api.base, c)?)))
             .collect();
+        // Removed courses (a pending or purged tombstone) aren't synced; a restore is.
+        let source_id = self.source_id.to_string();
+        let tombstones =
+            with_store(self.db, move |store| store.tombstone_states(&source_id)).await?;
+        let removed = |upsert: &CourseUpsert| {
+            tombstones
+                .get(&upsert.external_id)
+                .is_some_and(|state| state.skipped_by_sync())
+        };
+        for (_, upsert) in &active {
+            if removed(upsert) && !self.options.only_courses.is_empty() && self.wanted(upsert) {
+                self.warn(
+                    &mut report,
+                    format!(
+                        "{}: removed from PageLamp; restore it first",
+                        upsert.code.as_deref().unwrap_or(&upsert.name)
+                    ),
+                );
+            }
+        }
         let selected: Vec<&(&json::Course, CourseUpsert)> = active
             .iter()
-            .filter(|(_, upsert)| self.wanted(upsert))
+            .filter(|(_, upsert)| self.wanted(upsert) && !removed(upsert))
             .collect();
         let selected_ids: HashSet<String> = selected.iter().map(|(_, u)| u.id.clone()).collect();
 

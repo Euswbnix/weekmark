@@ -49,6 +49,8 @@ impl App {
         on_event: impl Fn(SyncEvent) + Send + Sync,
     ) -> Result<SyncSummary> {
         let _lock = self.acquire_sync_lock()?;
+        // S8: due purges first (and files a failed Trash move left).
+        self.purge_due_at_sync_start();
         let _activity = self.begin_activity(ActivityKind::Sync, None);
         let cancel = self.begin_cancellable();
         let started_at = Utc::now();
@@ -80,6 +82,8 @@ impl App {
         on_event: impl Fn(SyncEvent) + Send + Sync,
     ) -> Result<SourceSyncResult> {
         let _lock = self.acquire_sync_lock()?;
+        // S8: due purges first (and files a failed Trash move left).
+        self.purge_due_at_sync_start();
         let _activity = self.begin_activity(ActivityKind::Sync, Some(source_id));
         let cancel = self.begin_cancellable();
         let source = self.source(source_id)?;
@@ -98,6 +102,8 @@ impl App {
         on_event: impl Fn(SyncEvent) + Send + Sync,
     ) -> Result<SourceSyncResult> {
         let _lock = self.acquire_sync_lock()?;
+        // S8: due purges first (and files a failed Trash move left).
+        self.purge_due_at_sync_start();
         let course = self.read_store()?.resolve_course_with(course, true)?;
         let _activity = self.begin_activity(ActivityKind::Download, Some(&course.source_id));
         let source = self.source(&course.source_id)?;
@@ -137,7 +143,7 @@ impl App {
     }
 
     /// Register this sync's stop request until the returned guard is dropped.
-    fn begin_cancellable(&self) -> CancelGuard<'_> {
+    pub(crate) fn begin_cancellable(&self) -> CancelGuard<'_> {
         let flag = CancelFlag::new();
         *self
             .state
@@ -147,11 +153,11 @@ impl App {
         CancelGuard { app: self, flag }
     }
 
-    fn acquire_sync_lock(&self) -> Result<SyncLock> {
+    pub(crate) fn acquire_sync_lock(&self) -> Result<SyncLock> {
         SyncLock::acquire(&paths::sync_lock_path_in(self.data_dir()))
     }
 
-    fn source(&self, source_id: &str) -> Result<SourceRecord> {
+    pub(crate) fn source(&self, source_id: &str) -> Result<SourceRecord> {
         self.read_store()?
             .get_source(source_id)?
             .ok_or_else(|| crate::unknown_source(source_id))
@@ -159,7 +165,7 @@ impl App {
 
     /// Run one source and record the outcome. Never fails: problems become `ok: false`.
     /// `extractor` reads the files of this sync (one per sync, see `ingest::Extractor`).
-    async fn sync_one(
+    pub(crate) async fn sync_one(
         &self,
         source: &SourceRecord,
         req: &SyncRequest,
@@ -413,18 +419,18 @@ impl App {
 }
 
 /// This sync's stop request, registered in the app until dropped.
-struct CancelGuard<'a> {
+pub(crate) struct CancelGuard<'a> {
     app: &'a App,
     flag: CancelFlag,
 }
 
 impl CancelGuard<'_> {
-    fn flag(&self) -> CancelFlag {
+    pub(crate) fn flag(&self) -> CancelFlag {
         self.flag.clone()
     }
 
     /// `result`, or `Cancelled` if the sync was stopped.
-    fn result(&self, result: SourceSyncResult) -> Result<SourceSyncResult> {
+    pub(crate) fn result(&self, result: SourceSyncResult) -> Result<SourceSyncResult> {
         if self.flag.is_cancelled() {
             Err(AppError::cancelled())
         } else {

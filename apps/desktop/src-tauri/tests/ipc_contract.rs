@@ -7,9 +7,11 @@
 //! Tauri's "missing required key" or "command not found" strings, means the UI and the Rust
 //! side disagree about the contract.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use pagelamp_app::App;
+use pagelamp_app::trash::FileTrash;
 use pagelamp_core::secrets::MemorySecrets;
 use pagelamp_desktop_lib::{Backend, with_commands};
 use serde_json::Value;
@@ -36,6 +38,16 @@ const SKIPPED: &[&str] = &[
     "detect_local_servers",
 ];
 
+/// The removal commands' Trash here: moves nothing, so a changed fixture can never reach this
+/// computer's real Trash.
+struct NoTrash;
+
+impl FileTrash for NoTrash {
+    fn trash(&self, _path: &Path) -> Result<(), String> {
+        Err("the contract test's Trash moves nothing".into())
+    }
+}
+
 #[test]
 fn every_ui_call_reaches_its_command() {
     let data_dir = tempfile::tempdir().expect("temp dir");
@@ -44,6 +56,7 @@ fn every_ui_call_reaches_its_command() {
         Arc::new(MemorySecrets::new()),
     )
     .expect("open App in a temp dir");
+    facade.set_trash(Arc::new(NoTrash));
     let app = with_commands(mock_builder())
         .manage(Backend::from_app(facade))
         .build(mock_context(noop_assets()))

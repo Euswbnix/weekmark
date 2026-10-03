@@ -1,6 +1,6 @@
 # Privacy
 
-*Last updated: 2026-09-28 · applies to PageLamp v0.1. Items marked **(v0.3)** describe the v0.3
+*Last updated: 2026-09-30 · applies to PageLamp v0.1. Items marked **(v0.3)** describe the v0.3
 pre-releases and later; v0.1.0 doesn't have them.*
 
 PageLamp is a local app. There is no PageLamp server, account, analytics or telemetry. The people
@@ -15,6 +15,7 @@ who build PageLamp never receive your data.
 | Canvas access token, calendar-feed link | your operating system's keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) — never in the database, logs or AI output | to sync on your behalf |
 | **(v0.3)** Your update settings, the result of the last update check, and the version you last ran | the same database | to know when the next check is due and to show "What's new" once |
 | **(v0.3)** A backup of the database, made before an update changes its format | `pagelamp.db.v<N>.bak` next to the database, readable only by you; only the newest is kept, and it is deleted when you remove your last source | so a failed update can be undone. It holds the same course data as the database |
+| **(v0.3)** For each course you removed: its name and code, its ID at its source (the Canvas course ID or the folder's name) and which source it came from, why and when you removed it, when its data is to be or was deleted, your choices for deleting it, whether its downloaded files still wait for the Trash, whether Canvas restricts access to it by date, and your settings for it (AI policy and its note, AI access, your answer about sharing its materials with AI services, whether it was hidden, the dates you set, and its calendar's dates without break labels or week topics); no material text | the same database, until you undo the removal, a restore brings the course back, you choose *Forget*, or you remove its source | so a sync doesn't add the course back, and restoring it brings your settings back |
 
 PageLamp does **not** store assignment instructions or submissions — only assignment titles, due
 dates and links. It never reads your university password.
@@ -49,6 +50,30 @@ dates and links. It never reads your university password.
   and Canvas), its deadlines and events (calendar feed), and for Canvas the course files you
   downloaded — plus its token or feed link in the keychain. Your own course folder and anything in
   Canvas or your LMS calendar are never changed.
+- **(v0.3) Remove a course** (*Remove from PageLamp…* on the course's *Settings* tab, or
+  `pagelamp course remove <course>`) takes it out of every list and your AI app at once and stops
+  syncing it. Unless you choose *Delete now*, nothing is deleted for 7 days, and *Undo* (also in
+  *Settings → Removed courses*, or `pagelamp course restore <id>`) puts it back. After that, at the
+  next sync (or with `pagelamp course purge`), PageLamp deletes the course's data: its modules,
+  materials and announcements with their text and search index, the deadlines synced with it, its
+  calendar, and what PageLamp's AI features wrote for that course alone (such as explanations and
+  calendar proposals). Calendar-feed events linked to it only lose that link, and your study plan
+  keeps its items for the course, hidden while PageLamp remembers the removal. For Canvas courses,
+  the files you downloaded go to the system Trash (the Recycle Bin on Windows) unless you tick *Keep
+  downloaded files*; if that fails, they stay where they are and PageLamp tries again at each sync.
+  PageLamp deletes them for good only if you choose *Delete files permanently* after a move to the
+  Trash failed (or `pagelamp course purge --permanent`), or if you remove the course's Canvas source
+  before its data is deleted, since removing a source deletes the files downloaded for it. Your own
+  course folder and anything in Canvas are never changed. *Also delete the pre-update backup*
+  deletes that backup for good when the course's data is deleted (an undo keeps it). The backup is a
+  copy of your whole database from before the last update, so it holds every course you had then,
+  not just this one; the box is ticked by default once the backup is 14 days old. A small record of
+  the course stays (see the table above) until you choose *Forget*, a restore brings the course
+  back, or you remove its source; after *Forget*, the next sync adds the course back if its source
+  still lists it. *Restore* tries to bring a deleted course back by syncing it again and puts your
+  saved settings back; it can't if Canvas no longer lists the course or restricts access to it, or
+  while you're offline. Its files come back as not downloaded, and announcements older than 120 days
+  don't come back.
 - **Delete everything:** remove each source first (so its token or feed link is deleted from the
   keychain), then quit PageLamp and delete the data folder above. The desktop app also keeps its
   display preferences (theme, language, onboarding done) in its own app storage under

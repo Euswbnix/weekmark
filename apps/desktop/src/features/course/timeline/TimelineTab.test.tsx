@@ -4,8 +4,8 @@ import { todayIso } from "@/lib/format";
 import { DEMO101, DEMO310, openCourse } from "../testing";
 
 // These tests cover the dates form a real alpha.1 build shows (v1: first and last day of
-// classes). Form v2 is behind REMOVAL_UI (CourseDatesForm.test.tsx).
-vi.mock("../removal/availability", () => ({ REMOVAL_UI: false, removalUiEnabled: () => false }));
+// classes). Form v2 is behind DATES_V2_UI (CourseDatesForm.test.tsx).
+vi.mock("./availability", () => ({ DATES_V2_UI: false, datesV2UiEnabled: () => false }));
 
 /** "YYYY-MM-DD" shifted by whole days (UTC arithmetic, so no DST surprises). */
 function shiftIso(date: string, days: number): string {

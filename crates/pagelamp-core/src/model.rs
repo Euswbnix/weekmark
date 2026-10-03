@@ -241,6 +241,11 @@ pub struct CourseTermData {
     /// The student's own overrides as saved (`Course.term_*` merges them field by field).
     pub user_term_start: Option<NaiveDate>,
     pub user_term_end: Option<NaiveDate>,
+    /// The school a folder course names in `course.toml` (`institution = "uoft"`): opts it into
+    /// the session hint and the school's calendar (calendar design §6.3, §6.4). Canvas courses
+    /// are known by their host instead.
+    #[serde(default)]
+    pub institution: Option<String>,
 }
 
 /// A course as read back from the store: synced fields + user overrides resolved.
@@ -264,6 +269,10 @@ pub struct Course {
     /// The student's switch "Let my AI app read this course's materials" (default on).
     /// Use `ai_materials()` for the effective state — a `prohibited` policy wins over it.
     pub ai_access: bool,
+    /// The student's answer to "May this course's materials be shared with an AI service?"
+    /// (question (b)). Only `not_allowed` keeps material text from cloud models PageLamp runs
+    /// itself; the student's own AI app over MCP is unaffected.
+    pub material_sharing: crate::ai::MaterialSharing,
     pub hidden: bool,
     /// False when the LMS no longer lists the course as active (e.g. the term ended). Such
     /// courses are kept with all their data; only the student removes them.
@@ -590,12 +599,6 @@ pub struct Event {
 /// ignored. The longest code wins ("DEMO1011" over "DEMO101"); between equally long codes a
 /// visible course wins over a hidden one (e.g. last year's folder of the same course).
 pub fn course_for_hint<'a>(hint: &str, courses: &'a [Course]) -> Option<&'a Course> {
-    fn squash(text: &str) -> String {
-        text.chars()
-            .filter(|c| !c.is_whitespace())
-            .flat_map(char::to_uppercase)
-            .collect()
-    }
     let target = squash(hint);
     courses
         .iter()
@@ -605,6 +608,34 @@ pub fn course_for_hint<'a>(hint: &str, courses: &'a [Course]) -> Option<&'a Cour
         })
         .max_by_key(|(len, course)| (*len, !course.hidden))
         .map(|(_, course)| course)
+}
+
+/// Whether a course text (see `course_for_hint`) starts with `code` as a whole token,
+/// case-insensitive with spaces ignored (e.g. a feed event of a removed course): "DEMO101 F"
+/// and "demo 101" name DEMO101, "DEMO1011 S" doesn't ("MAT1" never hides MAT135).
+pub fn hint_names_code(hint: &str, code: &str) -> bool {
+    let code = squash(code);
+    if code.is_empty() {
+        return false;
+    }
+    let mut hint = hint.chars().flat_map(char::to_uppercase).peekable();
+    for want in code.chars() {
+        loop {
+            match hint.next() {
+                Some(c) if c.is_whitespace() => continue,
+                Some(c) if c == want => break,
+                _ => return false,
+            }
+        }
+    }
+    !hint.peek().is_some_and(|c| c.is_alphanumeric())
+}
+
+fn squash(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_uppercase)
+        .collect()
 }
 
 impl Event {
@@ -701,6 +732,8 @@ pub struct StoreCounts {
     pub chunks: u32,
     pub events: u32,
     pub study_plans: u32,
+    /// Courses under "Removed courses" (their tombstones), not counted above.
+    pub removed_courses: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -735,4 +768,21 @@ pub struct StoredStudyPlan {
     pub id: i64,
     pub created_at: Timestamp,
     pub plan: StudyPlan,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hint_names_code;
+
+    #[test]
+    fn a_hint_names_a_code_only_as_a_whole_token() {
+        assert!(hint_names_code("DEMO101H1 F LEC0101", "DEMO101H1"));
+        assert!(hint_names_code("demo 101 f", "DEMO101"));
+        assert!(hint_names_code("DEMO101", "demo 101"));
+        assert!(hint_names_code("DEMO101-LEC0101", "DEMO101"));
+        assert!(!hint_names_code("DEMO1011 S LEC0101", "DEMO101"));
+        assert!(!hint_names_code("MAT135 F", "MAT1"));
+        assert!(!hint_names_code("MAT135", ""));
+        assert!(!hint_names_code("MA", "MAT135"));
+    }
 }

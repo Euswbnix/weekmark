@@ -202,6 +202,9 @@ pub struct CrossChecks {
     pub first_class_event: Option<NaiveDate>,
     /// Week-numbered material observations: (posting day, week).
     pub observations: Vec<(NaiveDate, u32)>,
+    /// The reading weeks of the school's calendar (§6.4 anchor 5), when it has the course's
+    /// session.
+    pub school_reading_weeks: Vec<DateSpan>,
 }
 
 /// What the assembler needs besides the validated claims.
@@ -676,6 +679,56 @@ pub fn assemble(input: &AssembleInput<'_>) -> Result<Assembled, BadOutput> {
             kind: DateKind::WeekStart,
             segment: 0,
             options: Vec::new(),
+        });
+    }
+
+    // A reading week the school's calendar puts elsewhere: shown with both options.
+    let proposed_reading: Vec<&CalendarBreak> = calendar
+        .breaks
+        .iter()
+        .filter(|b| b.kind == BreakKind::ReadingWeek)
+        .collect();
+    let course_end = calendar
+        .exam_period
+        .map(|period| period.end)
+        .or_else(|| calendar.segments.last().and_then(|s| s.last_class));
+    for school in &input.checks.school_reading_weeks {
+        let inside = school.start >= calendar.segments[0].first_class
+            && course_end.is_none_or(|end| school.end <= end);
+        let matched = proposed_reading
+            .iter()
+            .any(|b| b.span.start <= school.end && school.start <= b.span.end);
+        let Some(nearest) = proposed_reading
+            .iter()
+            .min_by_key(|b| days_between(b.span.start, school.start).abs())
+        else {
+            break; // the proposal names no reading week: nothing to compare
+        };
+        if !inside || matched {
+            continue;
+        }
+        disagrees = true;
+        let segment = calendar
+            .segments
+            .iter()
+            .rposition(|s| s.first_class <= school.start)
+            .unwrap_or(0);
+        conflicts.push(CalendarConflict {
+            code: ConflictCode::DiffersFromInstitutionCalendar,
+            kind: DateKind::BreakSpan,
+            segment: u32::try_from(segment).unwrap_or(0),
+            options: vec![
+                AlternativeDate {
+                    date: nearest.span.start,
+                    end: Some(nearest.span.end),
+                    label: nearest.label.clone(),
+                    evidence: Vec::new(),
+                },
+                AlternativeDate {
+                    end: Some(school.end),
+                    ..own_option(school.start)
+                },
+            ],
         });
     }
 
@@ -1259,6 +1312,48 @@ mod tests {
     }
 
     /// V8: PageLamp's own evidence disagrees.
+    /// V8: a reading week the school's calendar puts elsewhere is a conflict with both options
+    /// (the school's without a label), and the calendar is at most Medium once accepted; the
+    /// same week agrees.
+    #[test]
+    fn a_reading_week_the_school_puts_elsewhere_is_a_conflict() {
+        let v = validated(fall(), Vec::new());
+        let span = |start, end| DateSpan {
+            start: date(2026, 10, start),
+            end: date(2026, 10, end),
+        };
+        let mut i = input(&v, date(2026, 10, 5));
+        i.checks.school_reading_weeks = vec![span(26, 30)];
+        let a = assemble(&i).unwrap();
+        assert!(
+            !a.conflicts
+                .iter()
+                .any(|c| c.code == ConflictCode::DiffersFromInstitutionCalendar)
+        );
+        i.checks.school_reading_weeks = vec![span(19, 23)];
+        let a = assemble(&i).unwrap();
+        let conflict = a
+            .conflicts
+            .iter()
+            .find(|c| c.code == ConflictCode::DiffersFromInstitutionCalendar)
+            .expect("a conflict");
+        assert_eq!(conflict.kind, DateKind::BreakSpan);
+        let options: Vec<(NaiveDate, Option<NaiveDate>)> =
+            conflict.options.iter().map(|o| (o.date, o.end)).collect();
+        assert_eq!(
+            options,
+            [
+                (date(2026, 10, 26), Some(date(2026, 10, 30))),
+                (date(2026, 10, 19), Some(date(2026, 10, 23)))
+            ]
+        );
+        assert!(
+            conflict.options[1].label.is_empty(),
+            "no label from the school"
+        );
+        assert!(a.disagrees_with_notes && !a.passing);
+    }
+
     #[test]
     fn cross_checks_become_conflicts_that_are_shown() {
         let v = validated(fall(), Vec::new());
@@ -1269,6 +1364,7 @@ mod tests {
             lms_course_start: Some(date(2026, 8, 10)),
             first_class_event: Some(date(2026, 9, 15)),
             observations: Vec::new(),
+            school_reading_weeks: Vec::new(),
         };
         let a = assemble(&i).unwrap();
         let codes: Vec<ConflictCode> = a.conflicts.iter().map(|c| c.code).collect();

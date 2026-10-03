@@ -7,6 +7,7 @@ use pagelamp_core::calendar::{
 };
 use pagelamp_core::lifecycle::{LifecycleInput, course_lifecycle, is_active};
 use pagelamp_core::model::*;
+use pagelamp_core::term::institution::InstitutionCalendar;
 use pagelamp_core::term::{TermInput, resolve_term};
 use pagelamp_core::timeline::{self, course_timeline, infer_timeline};
 
@@ -36,6 +37,7 @@ fn course(source: &str, code: &str, name: &str) -> Course {
         ai_policy: AiPolicy::Unknown,
         ai_policy_note: None,
         ai_access: true,
+        material_sharing: Default::default(),
         hidden: false,
         enrollment_active: true,
         updated_at: at("2026-09-01T12:00:00Z"),
@@ -89,6 +91,8 @@ struct Case {
     modules: Vec<Module>,
     events: Vec<Event>,
     confirmed: bool,
+    /// A school calendar fixture instead of the shipped file.
+    school: Option<InstitutionCalendar>,
 }
 
 impl Case {
@@ -101,6 +105,7 @@ impl Case {
             modules: Vec::new(),
             events: Vec::new(),
             confirmed: false,
+            school: None,
         }
     }
 
@@ -115,6 +120,7 @@ impl Case {
             materials: &self.materials,
             events: &self.events,
             today: date(today),
+            institution: self.school.as_ref(),
         }
     }
 
@@ -1704,4 +1710,202 @@ fn owners_shape_in_alpha_1_is_legacy_and_not_ended() {
     let lifecycle = case.lifecycle("2026-12-15");
     assert_ne!(lifecycle.state, LifecycleState::Ended);
     assert!(!lifecycle.suggest_removal);
+}
+
+// ----- alpha.2: the school's calendar (§6.4 anchor 5, A15) -------------------------------------
+
+/// Made-up dates (a fixture: never shipped): 2026-27 at Mississauga (5, Fall, Winter and both
+/// Summer sections) and St. George (1, Fall only); Scarborough (3) listed as missing.
+const SCHOOL: &str = r#"
+format = 1
+institution = "uoft"
+fixture = true
+
+[[years]]
+year = "2026-27"
+source = "test fixture, not UofT's dates"
+missing_campuses = [3]
+
+[[years.sessions]]
+session = "20269"
+campus = 5
+first_class = "2026-09-08"
+last_class = "2026-12-04"
+exams_start = "2026-12-07"
+exams_end = "2026-12-21"
+breaks = [{ kind = "reading_week", start = "2026-10-26", end = "2026-10-30" }]
+
+[[years.sessions]]
+session = "20271"
+campus = 5
+first_class = "2027-01-05"
+last_class = "2027-04-06"
+exams_start = "2027-04-09"
+exams_end = "2027-04-30"
+breaks = [{ kind = "reading_week", start = "2027-02-15", end = "2027-02-19" }]
+
+[[years.sessions]]
+session = "20275"
+campus = 5
+section = "F"
+first_class = "2027-05-10"
+last_class = "2027-06-18"
+exams_start = "2027-06-21"
+exams_end = "2027-06-25"
+
+[[years.sessions]]
+session = "20275"
+campus = 5
+section = "S"
+first_class = "2027-07-05"
+last_class = "2027-08-13"
+exams_start = "2027-08-16"
+exams_end = "2027-08-20"
+
+[[years.sessions]]
+session = "20269"
+campus = 1
+first_class = "2026-09-03"
+last_class = "2026-12-02"
+exams_start = "2026-12-05"
+exams_end = "2026-12-20"
+"#;
+
+fn with_school(course: Course, data: CourseTermData) -> Case {
+    let mut case = Case::new(course, data);
+    case.school = Some(InstitutionCalendar::parse(SCHOOL).unwrap());
+    case
+}
+
+/// CAL-23 `institution_calendar_dates`: the school's dates give the weeks, the reading week and
+/// the exam period at Medium; a session or campus the file lacks falls back to the window.
+#[test]
+fn institution_calendar_dates() {
+    let case = with_school(dem332(), uoft_window_term());
+    let t = case.timeline("2026-10-01");
+    assert_eq!(t.term.anchor, TermAnchorSource::InstitutionCalendar);
+    assert_eq!(t.term.anchor_confidence, Confidence::Medium);
+    assert_eq!(t.current_week, Some(4));
+    let reading = case.timeline("2026-10-28");
+    assert_eq!(reading.phase, CoursePhase::Break);
+    assert_eq!(reading.current_break_kind, Some(BreakKind::ReadingWeek));
+    // The reading week isn't numbered.
+    assert_eq!(case.timeline("2026-11-03").current_week, Some(8));
+    assert_eq!(case.timeline("2026-12-10").phase, CoursePhase::ExamPeriod);
+    // Kinds only: nothing from the file is a label.
+    assert!(t.term.breaks.iter().all(|b| b.label.is_empty()));
+
+    // 2027-28 isn't in the file, nor is Scarborough: the session window bounds the course.
+    for (code, name) in [
+        ("DEM332H5 F LEC0101 20279", "Demo Methods"),
+        ("DEM332H3 F LEC0101 20269", "Demo Methods"),
+    ] {
+        let case = with_school(course(UOFT, code, name), uoft_window_term());
+        let t = case.timeline("2026-10-01");
+        assert_ne!(
+            t.term.anchor,
+            TermAnchorSource::InstitutionCalendar,
+            "{code}"
+        );
+        assert!(
+            codes(&t).contains(&"institution_calendar_missing"),
+            "{code}"
+        );
+    }
+    // The shipped file has no years yet: no dates, and nothing to say about it.
+    let shipped = Case::new(dem332(), uoft_window_term()).timeline("2026-10-01");
+    assert_ne!(shipped.term.anchor, TermAnchorSource::InstitutionCalendar);
+    assert!(!codes(&shipped).contains(&"institution_calendar_missing"));
+}
+
+/// CAL-7, alpha.2 version: the owner's shape (a v0.1 start of 09-08, no end anywhere) takes the
+/// school's end, reading week and exam period. 12-15 is the exam period, never "Week 15", and
+/// the course ends after its exams.
+#[test]
+fn owners_shape_in_alpha_2_ends_with_the_school_calendar() {
+    let mut data = uoft_window_term();
+    data.user_term_start = Some(date("2026-09-08"));
+    let case = with_school(dem332(), data);
+    let t = case.timeline("2026-12-15");
+    assert_eq!(t.term.anchor, TermAnchorSource::StudentConfirmed);
+    assert_eq!(t.term.anchor_origin, Some(CalendarOrigin::Legacy));
+    assert_eq!(t.phase, CoursePhase::ExamPeriod);
+    assert_eq!(t.current_week, None);
+    assert!(codes(&t).contains(&"legacy_dates"));
+    let reading = case.timeline("2026-10-28");
+    assert_eq!(reading.current_break_kind, Some(BreakKind::ReadingWeek));
+    assert_eq!(case.timeline("2027-01-20").phase, CoursePhase::Ended);
+    assert_eq!(case.lifecycle("2027-01-20").state, LifecycleState::Ended);
+}
+
+/// The school's calendar only where the session hint applies (§6.3, D50): the UofT host, or a
+/// folder that says `institution = "uoft"`; never the same code elsewhere.
+#[test]
+fn institution_calendar_is_host_gated() {
+    let elsewhere = with_school(
+        course(
+            "canvas:lms.example.edu",
+            "DEM332H5 F LEC0101 20269",
+            "Demo Methods",
+        ),
+        uoft_window_term(),
+    );
+    let t = elsewhere.timeline("2026-10-01");
+    assert_ne!(t.term.anchor, TermAnchorSource::InstitutionCalendar);
+    assert!(!codes(&t).contains(&"institution_calendar_missing"));
+
+    let folder_course = course("folder:demo", "DEM332H5 F LEC0101 20269", "Demo Methods");
+    let without = with_school(folder_course.clone(), CourseTermData::default());
+    assert_ne!(
+        without.timeline("2026-10-01").term.anchor,
+        TermAnchorSource::InstitutionCalendar
+    );
+    let opted_in = with_school(
+        folder_course,
+        CourseTermData {
+            institution: Some("uoft".into()),
+            ..CourseTermData::default()
+        },
+    );
+    let t = opted_in.timeline("2026-10-01");
+    assert_eq!(t.term.anchor, TermAnchorSource::InstitutionCalendar);
+    assert_eq!(t.current_week, Some(4));
+}
+
+/// A full-year (Y) course takes the Fall and Winter sessions, the numbering continuing; a
+/// Summer S course its own section's dates; a campus without a Winter session gives none.
+#[test]
+fn institution_calendar_sections_and_full_year_courses() {
+    let year = with_school(
+        course(UOFT, "DEM137Y5 Y LEC0101 20269", "Demo Year"),
+        uoft_window_term(),
+    );
+    let t = year.timeline("2026-10-01");
+    assert_eq!(t.term.anchor, TermAnchorSource::InstitutionCalendar);
+    assert_eq!(t.term.teaching.len(), 2);
+    let winter = year.timeline("2026-12-28");
+    assert_eq!(winter.phase, CoursePhase::Break);
+    assert_eq!(winter.current_break_kind, Some(BreakKind::WinterBreak));
+    // 12 Fall weeks (the reading week isn't numbered), so January goes on from week 13.
+    assert_eq!(winter.break_after_week, Some(12));
+    assert_eq!(year.timeline("2027-01-20").current_week, Some(15));
+    assert_eq!(year.timeline("2027-04-20").phase, CoursePhase::ExamPeriod);
+
+    let summer = with_school(
+        course(UOFT, "DEM210H5 S LEC0101 20275", "Demo Summer"),
+        CourseTermData::default(),
+    );
+    let t = summer.timeline("2027-07-14");
+    assert_eq!(t.term.anchor, TermAnchorSource::InstitutionCalendar);
+    assert_eq!(t.term.teaching[0].first_class, date("2027-07-05"));
+    assert_eq!(t.current_week, Some(2));
+
+    let st_george_year = with_school(
+        course(UOFT, "DEM137Y1 Y LEC0101 20269", "Demo Year"),
+        uoft_window_term(),
+    );
+    assert_ne!(
+        st_george_year.timeline("2026-10-01").term.anchor,
+        TermAnchorSource::InstitutionCalendar
+    );
 }

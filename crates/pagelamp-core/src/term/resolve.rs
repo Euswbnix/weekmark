@@ -5,7 +5,7 @@
 //!    `CONFIRMED_DATES_KEY`), always used; a legacy end is dropped when start → end fails a
 //!    plausibility check;
 //! 2. the LMS course's own dates, 3. the LMS term, 4. the folder's dates, when plausible;
-//! 5. (from alpha.2) the school's published calendar;
+//! 5. the school's published calendar (`institution`; UofT, where the session hint applies);
 //! 6. week 1 fitted from the professor's week-numbered materials (`fit`).
 //!
 //! Plausibility (§6.3): a span is not used when it starts after it ends, is longer than 26
@@ -24,6 +24,7 @@ use regex::Regex;
 
 use super::evidence::{EvidenceCode, EvidenceItem};
 use super::fit::{self, Observation};
+use super::institution::{self, InstitutionCalendar, InstitutionTerm};
 use super::session::{SessionHint, session_hint};
 use super::{
     CalendarOrigin, CalendarStatus, DateSpan, RejectReason, RejectedDates, TeachingSegment,
@@ -72,6 +73,8 @@ pub struct TermInput<'a> {
     pub materials: &'a [Material],
     pub events: &'a [Event],
     pub today: NaiveDate,
+    /// The school's calendar to use (§6.4 anchor 5); `None`: the one shipped with PageLamp.
+    pub institution: Option<&'a InstitutionCalendar>,
 }
 
 impl TermInput<'_> {
@@ -111,6 +114,9 @@ pub struct ResolvedTerm {
     pub student_last_class: Option<NaiveDate>,
     /// Accepted when a calendar is in force.
     pub calendar: CalendarStatus,
+    /// The school's dates for this course's session and campus, whether or not they are the
+    /// anchor (a calendar proposal's V8 check compares its reading weeks).
+    pub institution: Option<InstitutionTerm>,
     /// Non-bulk per-day week observations (§6.5), oldest first.
     pub(crate) observations: Vec<Observation>,
     /// Week 1 fitted from the professor's materials, whether or not it is the anchor.
@@ -166,7 +172,7 @@ pub fn resolve_term(input: &TermInput<'_>) -> ResolvedTerm {
     let tz = input.time_zone();
     let data = input.data;
     let lms = &data.lms;
-    let session = session_hint(input.course);
+    let session = session_hint(input.course, data.institution.as_deref());
     let full_year = session.as_ref().is_some_and(|s| s.full_year)
         || lms
             .term_name
@@ -267,6 +273,30 @@ pub fn resolve_term(input: &TermInput<'_>) -> ResolvedTerm {
         }
     }
 
+    // The school's published calendar (§6.4 anchor 5), below the LMS and folder dates.
+    let school = input.institution.unwrap_or_else(|| institution::shipped());
+    let school_term = session.as_ref().and_then(|hint| school.term(hint));
+    if let Some(term) = &school_term {
+        plausible.push(Anchor {
+            source: TermAnchorSource::InstitutionCalendar,
+            start: term.first_class(),
+            end: term.last_class(),
+            confidence: Confidence::Medium,
+            origin: None,
+            end_clipped: false,
+            fit_weeks: None,
+        });
+    } else if let Some(hint) = &session
+        && hint.campus.is_some()
+        && !school.years.is_empty()
+    {
+        // The file has other years (or campuses) but not this one: the window bounds it.
+        evidence.push(
+            EvidenceItem::new(EvidenceCode::InstitutionCalendarMissing)
+                .text("session", &hint.session),
+        );
+    }
+
     // The fit from the professor's materials.
     let observations = fit::observations(input.modules, input.materials, tz, input.today);
     let frame = outer_frame.unwrap_or(DateSpan {
@@ -320,7 +350,9 @@ pub fn resolve_term(input: &TermInput<'_>) -> ResolvedTerm {
         evidence.push(EvidenceItem::new(EvidenceCode::StudentEndUsed).date("end", end));
     }
     // A student start without an end borrows a plausible end from below (a calendar's
-    // segments say what they mean).
+    // segments say what they mean). From the school's calendar it takes its breaks and exam
+    // period too (the same term), from the student's own start.
+    let mut borrowed_school: Option<InstitutionTerm> = None;
     if let Some(anchor) = anchor.as_mut()
         && input.calendar.is_none()
         && anchor.source == TermAnchorSource::StudentConfirmed
@@ -333,6 +365,11 @@ pub fn resolve_term(input: &TermInput<'_>) -> ResolvedTerm {
     {
         anchor.end = lower.end;
         anchor.end_clipped = lower.end_clipped;
+        if lower.source == TermAnchorSource::InstitutionCalendar {
+            borrowed_school = school_term
+                .as_ref()
+                .and_then(|term| term.starting(anchor.start));
+        }
         evidence.push(anchor_item(lower, lms.term_name.as_deref()));
     }
 
@@ -401,24 +438,40 @@ pub fn resolve_term(input: &TermInput<'_>) -> ResolvedTerm {
             student_start: data.user_term_start,
             student_end: data.user_term_end,
         },
-        (Some(anchor), None) => TermResolution {
-            week_one_monday: Some(week_one_monday(anchor.start)),
-            teaching: vec![TeachingSegment {
-                first_class: anchor.start,
-                last_class: anchor.end,
-                first_week_number: 1,
-            }],
-            breaks: Vec::new(),
-            exams_end: None,
-            anchor: anchor.source,
-            anchor_confidence: anchor.confidence,
-            anchor_origin: anchor.origin,
-            ai_label: None,
-            outer_frame,
-            not_used,
-            student_start: data.user_term_start,
-            student_end: data.user_term_end,
-        },
+        (Some(anchor), None) => {
+            // The school's segments, breaks and exam period when its calendar is the anchor or
+            // lent the student's start its end.
+            let school_dates = match anchor.source {
+                TermAnchorSource::InstitutionCalendar => school_term.clone(),
+                _ => borrowed_school,
+            };
+            let (teaching, breaks, exams_end) = match school_dates {
+                Some(term) => (term.segments, term.breaks, term.exams_end),
+                None => (
+                    vec![TeachingSegment {
+                        first_class: anchor.start,
+                        last_class: anchor.end,
+                        first_week_number: 1,
+                    }],
+                    Vec::new(),
+                    None,
+                ),
+            };
+            TermResolution {
+                week_one_monday: Some(week_one_monday(anchor.start)),
+                teaching,
+                breaks,
+                exams_end,
+                anchor: anchor.source,
+                anchor_confidence: anchor.confidence,
+                anchor_origin: anchor.origin,
+                ai_label: None,
+                outer_frame,
+                not_used,
+                student_start: data.user_term_start,
+                student_end: data.user_term_end,
+            }
+        }
         (None, _) => TermResolution {
             outer_frame,
             not_used,
@@ -464,6 +517,7 @@ pub fn resolve_term(input: &TermInput<'_>) -> ResolvedTerm {
         first_activity,
         last_activity,
         notes_week: fit::notes_week(&observations),
+        institution: school_term,
         observations,
         fitted,
         plausible_lms_start,
@@ -697,8 +751,7 @@ fn rejected_item(
             )
             .reason(rejected.reason);
     }
-    if rejected.source == TermAnchorSource::LmsTerm
-        && rejected.reason == RejectReason::LongerThanTeachingTerm
+    if rejected.is_enrollment_window()
         && let (Some(start), Some(end)) = (rejected.start, rejected.end)
     {
         let weeks = (days_between(start, end) + 1 + 6) / 7;

@@ -1,11 +1,12 @@
 //! The course AI policy gate on synthetic DEMO courses in every state (design §4.4, M1 DoD 2):
 //! no text of a course that isn't `readable` ever reaches a prompt, hidden courses reach it not
-//! at all, and a policy change between two runs is honoured.
+//! at all, a course answered "not allowed" to question (b) gives no text to a cloud model, and a
+//! policy change between two runs is honoured.
 //!
 //! Every material holds a unique canary word; the tests look for it in the assembled prompt.
 
 use chrono::{NaiveDate, TimeZone, Utc};
-use pagelamp_core::ai::BlockReason;
+use pagelamp_core::ai::{BlockReason, Destination, MaterialSharing};
 use pagelamp_core::ai_gate::{
     ContextBudget, GateError, LeftOutReason, PlanScope, assemble, note_context, plan_context,
     week_context,
@@ -16,6 +17,7 @@ use pagelamp_core::views::AsOf;
 
 const SOURCE: &str = "folder:demo";
 const BUDGET: ContextBudget = ContextBudget { max_chars: 200_000 };
+const CLOUD: Destination = Destination::Cloud;
 
 fn at() -> AsOf {
     AsOf {
@@ -135,7 +137,7 @@ const ALL_CANARIES: [&str; 4] = [
 #[test]
 fn an_explanation_gets_only_readable_text_without_assessments_or_links() {
     let store = demo_store();
-    let context = week_context(&store, "DEMO101", Some(3), at(), BUDGET).unwrap();
+    let context = week_context(&store, "DEMO101", Some(3), at(), CLOUD, BUDGET).unwrap();
     let prompt = assemble("Explain the week.", &context, None);
     let text = prompt.user_text();
     assert!(text.contains("readablecanaryslides"), "{text}");
@@ -164,20 +166,48 @@ fn an_explanation_gets_only_readable_text_without_assessments_or_links() {
 fn courses_that_are_not_readable_are_blocked_with_their_reason() {
     let store = demo_store();
     assert_eq!(
-        blocked(week_context(&store, "DEMO202", Some(3), at(), BUDGET)),
+        blocked(week_context(
+            &store,
+            "DEMO202",
+            Some(3),
+            at(),
+            CLOUD,
+            BUDGET
+        )),
         BlockReason::CourseAiTurnedOff
     );
     assert_eq!(
-        blocked(week_context(&store, "DEMO303", Some(3), at(), BUDGET)),
+        blocked(week_context(
+            &store,
+            "DEMO303",
+            Some(3),
+            at(),
+            CLOUD,
+            BUDGET
+        )),
         BlockReason::CoursePolicyProhibited
     );
     assert_eq!(
-        blocked(week_context(&store, "DEMO404", Some(3), at(), BUDGET)),
+        blocked(week_context(
+            &store,
+            "DEMO404",
+            Some(3),
+            at(),
+            CLOUD,
+            BUDGET
+        )),
         BlockReason::CourseHidden
     );
     // A readable week with nothing readable in it.
     assert_eq!(
-        blocked(week_context(&store, "DEMO101", Some(9), at(), BUDGET)),
+        blocked(week_context(
+            &store,
+            "DEMO101",
+            Some(9),
+            at(),
+            CLOUD,
+            BUDGET
+        )),
         BlockReason::NoReadableMaterials
     );
 }
@@ -223,8 +253,29 @@ fn plans_and_notes_carry_structure_only_and_never_hidden_courses() {
     );
 }
 
+/// The block a course in this state gets, in the gate's order; `None`: its text may be sent.
+fn expected_block(
+    policy: AiPolicy,
+    access: bool,
+    hidden: bool,
+    sharing: MaterialSharing,
+    destination: Destination,
+) -> Option<BlockReason> {
+    if hidden {
+        Some(BlockReason::CourseHidden)
+    } else if policy == AiPolicy::Prohibited {
+        Some(BlockReason::CoursePolicyProhibited)
+    } else if !access {
+        Some(BlockReason::CourseAiTurnedOff)
+    } else if sharing == MaterialSharing::NotAllowed && destination == Destination::Cloud {
+        Some(BlockReason::MaterialSharingNotAllowed)
+    } else {
+        None
+    }
+}
+
 #[test]
-fn every_policy_switch_and_visibility_combination_is_gated() {
+fn every_policy_switch_visibility_sharing_and_destination_combination_is_gated() {
     let policies = [
         AiPolicy::Unknown,
         AiPolicy::Prohibited,
@@ -232,51 +283,117 @@ fn every_policy_switch_and_visibility_combination_is_gated() {
         AiPolicy::AllowedWithCitation,
         AiPolicy::Unrestricted,
     ];
+    let store = demo_store();
+    let id = format!("{SOURCE}/course/DEMO101");
     let mut cases = 0;
+    let mut sent = 0;
     for policy in policies {
         for access in [true, false] {
             for hidden in [false, true] {
-                let store = demo_store();
-                let id = format!("{SOURCE}/course/DEMO101");
-                store.set_course_policy(&id, policy, None).unwrap();
-                store.set_course_ai_access(&id, access).unwrap();
-                store.set_course_hidden(&id, hidden).unwrap();
-                let result = week_context(&store, "DEMO101", Some(3), at(), BUDGET);
-                let readable = policy != AiPolicy::Prohibited && access && !hidden;
-                match result {
-                    Ok(context) => {
-                        assert!(readable, "{policy:?} {access} {hidden}");
-                        let prompt = assemble("Explain.", &context, None);
-                        assert!(prompt.user_text().contains("readablecanaryslides"));
+                for sharing in MaterialSharing::ALL {
+                    store.set_course_policy(&id, policy, None).unwrap();
+                    store.set_course_ai_access(&id, access).unwrap();
+                    store.set_course_hidden(&id, hidden).unwrap();
+                    store.set_course_material_sharing(&id, sharing).unwrap();
+                    for destination in Destination::ALL {
+                        let case =
+                            format!("{policy:?} {access} {hidden} {sharing:?} {destination:?}");
+                        let result =
+                            week_context(&store, "DEMO101", Some(3), at(), destination, BUDGET);
+                        match (
+                            result,
+                            expected_block(policy, access, hidden, sharing, destination),
+                        ) {
+                            (Ok(context), None) => {
+                                let prompt = assemble("Explain.", &context, None);
+                                assert!(
+                                    prompt.user_text().contains("readablecanaryslides"),
+                                    "{case}"
+                                );
+                                sent += 1;
+                            }
+                            (Err(GateError::Blocked(reason)), Some(expected)) => {
+                                assert_eq!(reason, expected, "{case}");
+                            }
+                            (Ok(_), Some(expected)) => {
+                                panic!("{case}: sent, expected {expected:?}")
+                            }
+                            (Err(err), None) => panic!("{case}: {err}"),
+                            (Err(err), Some(_)) => panic!("{case}: {err}"),
+                        }
+                        // Structure contexts never carry text, whatever the state; question (b)
+                        // doesn't limit them.
+                        let plan = plan_context(&store, &PlanScope::default(), at()).unwrap();
+                        let text = assemble("Plan.", &plan, None).user_text().to_string();
+                        assert!(!text.contains("readablecanary"), "{case}: {text}");
+                        assert_eq!(text.contains("DEMO101"), !hidden, "{case}");
+                        cases += 1;
                     }
-                    Err(GateError::Blocked(reason)) => {
-                        assert!(!readable, "{policy:?} {access} {hidden}");
-                        let expected = if hidden {
-                            BlockReason::CourseHidden
-                        } else if policy == AiPolicy::Prohibited {
-                            BlockReason::CoursePolicyProhibited
-                        } else {
-                            BlockReason::CourseAiTurnedOff
-                        };
-                        assert_eq!(reason, expected, "{policy:?} {access} {hidden}");
-                    }
-                    Err(other) => panic!("{other}"),
                 }
-                // Structure contexts never carry text, whatever the state.
-                let plan = plan_context(&store, &PlanScope::default(), at()).unwrap();
-                let text = assemble("Plan.", &plan, None).user_text().to_string();
-                assert!(!text.contains("readablecanary"), "{text}");
-                cases += 1;
             }
         }
     }
-    assert_eq!(cases, 20);
+    assert_eq!(cases, 160);
+    // Readable: 4 policies (all but prohibited) with the switch on and visible; each sends in
+    // every answer × destination pair but "not allowed" to the cloud.
+    assert_eq!(sent, 4 * (4 * 2 - 1));
+}
+
+#[test]
+fn not_allowed_keeps_text_from_cloud_models_only() {
+    let store = demo_store();
+    store
+        .set_course_material_sharing(
+            &format!("{SOURCE}/course/DEMO101"),
+            MaterialSharing::NotAllowed,
+        )
+        .unwrap();
+    assert_eq!(
+        blocked(week_context(
+            &store,
+            "DEMO101",
+            Some(3),
+            at(),
+            CLOUD,
+            BUDGET
+        )),
+        BlockReason::MaterialSharingNotAllowed
+    );
+    let local = week_context(
+        &store,
+        "DEMO101",
+        Some(3),
+        at(),
+        Destination::OnDevice,
+        BUDGET,
+    )
+    .unwrap();
+    assert!(
+        assemble("Explain.", &local, None)
+            .user_text()
+            .contains("readablecanaryslides")
+    );
+    // The policy's own blocks come first.
+    store
+        .set_course_ai_access(&format!("{SOURCE}/course/DEMO101"), false)
+        .unwrap();
+    assert_eq!(
+        blocked(week_context(
+            &store,
+            "DEMO101",
+            Some(3),
+            at(),
+            CLOUD,
+            BUDGET
+        )),
+        BlockReason::CourseAiTurnedOff
+    );
 }
 
 #[test]
 fn a_policy_change_between_two_runs_is_honoured() {
     let store = demo_store();
-    assert!(week_context(&store, "DEMO101", Some(3), at(), BUDGET).is_ok());
+    assert!(week_context(&store, "DEMO101", Some(3), at(), CLOUD, BUDGET).is_ok());
     store
         .set_course_policy(
             &format!("{SOURCE}/course/DEMO101"),
@@ -285,7 +402,14 @@ fn a_policy_change_between_two_runs_is_honoured() {
         )
         .unwrap();
     assert_eq!(
-        blocked(week_context(&store, "DEMO101", Some(3), at(), BUDGET)),
+        blocked(week_context(
+            &store,
+            "DEMO101",
+            Some(3),
+            at(),
+            CLOUD,
+            BUDGET
+        )),
         BlockReason::CoursePolicyProhibited
     );
 }
@@ -296,7 +420,7 @@ fn a_small_budget_trims_fairly_and_lists_what_did_not_fit() {
     let tiny = ContextBudget { max_chars: 5 };
     // The only readable material is longer than the budget: nothing fits, so nothing is sent.
     assert_eq!(
-        blocked(week_context(&store, "DEMO101", Some(3), at(), tiny)),
+        blocked(week_context(&store, "DEMO101", Some(3), at(), CLOUD, tiny)),
         BlockReason::NoReadableMaterials
     );
 }

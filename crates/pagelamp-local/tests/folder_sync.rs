@@ -498,3 +498,96 @@ fn a_stopped_sync_ends_before_the_next_file_and_keeps_what_was_done() {
         "file 1 stays indexed; file 2 was stopped before it was read"
     );
 }
+
+/// The flag `course.toml`'s `outline` sets, by material title.
+fn named_outlines(store: &Store, course_id: &str) -> Vec<String> {
+    let mut statement = store
+        .conn()
+        .prepare("SELECT title FROM materials WHERE course_id = ?1 AND named_outline = 1")
+        .unwrap();
+    statement
+        .query_map([course_id], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+#[test]
+fn course_toml_names_the_outline_and_a_missing_one_only_warns() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "DEMO707 Field Methods/Admin/Course outline.md",
+        "outline",
+    );
+    write(root, "DEMO707 Field Methods/notes.txt", "notes");
+    write(
+        root,
+        "DEMO707 Field Methods/course.toml",
+        "outline = \"./Admin/Course outline.md\"\n",
+    );
+    let store = store();
+    let extractor = Extractor::default();
+    let report = sync_folder(&store, SOURCE, root, None, &extractor, &no_progress).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let course = format!("{SOURCE}/course/DEMO707 Field Methods");
+    assert_eq!(named_outlines(&store, &course), ["Course outline.md"]);
+
+    write(
+        root,
+        "DEMO707 Field Methods/course.toml",
+        "outline = \"gone.pdf\"\n",
+    );
+    let report = sync_folder(&store, SOURCE, root, None, &extractor, &no_progress).unwrap();
+    assert!(
+        report.warnings.iter().any(|w| w.contains("gone.pdf")),
+        "{:?}",
+        report.warnings
+    );
+    assert!(named_outlines(&store, &course).is_empty());
+}
+
+/// `institution = "uoft"` in course.toml opts the folder course into UofT's session codes and
+/// calendar (calendar design §6.3, D50): sync writes it, and a later sync without it clears it;
+/// a school PageLamp doesn't know is a warning, never stored.
+#[test]
+fn course_toml_names_the_institution() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(root, "DEM332H5 Demo Methods/notes.txt", "notes");
+    write(
+        root,
+        "DEM332H5 Demo Methods/course.toml",
+        "institution = \"UofT\"\n",
+    );
+    let store = store();
+    let extractor = Extractor::default();
+    let report = sync_folder(&store, SOURCE, root, None, &extractor, &no_progress).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let course = format!("{SOURCE}/course/DEM332H5 Demo Methods");
+    let institution = |store: &Store| {
+        store
+            .course_term_data(&course)
+            .unwrap()
+            .unwrap()
+            .institution
+    };
+    assert_eq!(institution(&store).as_deref(), Some("uoft"));
+
+    write(
+        root,
+        "DEM332H5 Demo Methods/course.toml",
+        "institution = \"elsewhere\"\n",
+    );
+    let report = sync_folder(&store, SOURCE, root, None, &extractor, &no_progress).unwrap();
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("institution \"elsewhere\" isn't a school PageLamp knows")),
+        "{:?}",
+        report.warnings
+    );
+    assert_eq!(institution(&store), None);
+}

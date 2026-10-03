@@ -34,6 +34,7 @@ pub mod lifecycle;
 pub mod model;
 pub mod paths;
 pub mod planner;
+pub mod removal;
 pub mod secrets;
 pub mod source;
 pub mod store;

@@ -9,6 +9,7 @@
 //! stdin when piped (`echo "$URL" | pagelamp ical add`), never from command-line arguments
 //! (they would end up in shell history and process lists).
 
+mod ai;
 mod course;
 mod text;
 
@@ -23,6 +24,7 @@ use pagelamp_app::{
     App, AppError, McpClient, McpClientConfig, SourceSyncResult, SyncEvent, SyncRequest,
     SyncSummary,
 };
+use pagelamp_core::ai::MaterialSharing;
 use pagelamp_core::brand;
 use pagelamp_core::model::{AiMaterialsState, AiPolicy, SourceKind, SourceRecord};
 use serde::Serialize;
@@ -89,6 +91,11 @@ enum Command {
     /// Change a course's settings.
     #[command(subcommand)]
     Course(CourseCommand),
+    /// Models PageLamp itself uses (API keys, local servers): setup, choices, cost and usage.
+    Ai {
+        #[command(subcommand)]
+        command: Option<ai::AiCommand>,
+    },
     /// Search your course materials.
     Search {
         /// Words to look for (any of them; best matches first).
@@ -200,6 +207,46 @@ enum CourseCommand {
         /// The course's code, name or id.
         course: String,
     },
+    /// Remove courses from PageLamp: hidden at once, their local data deleted after 7 days
+    /// (or now with --now). Your own folders are never changed. --dry-run shows what goes.
+    Remove {
+        /// The courses' codes, names or ids.
+        #[arg(required = true)]
+        courses: Vec<String>,
+        /// Show what would be removed and kept, and remove nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Delete the local data now instead of in 7 days (no undo).
+        #[arg(long)]
+        now: bool,
+        /// Keep the files PageLamp downloaded from Canvas.
+        #[arg(long)]
+        keep_files: bool,
+        /// Also delete the pre-update backup (it still holds these courses' text), together
+        /// with the local data (now with --now, else in 7 days; an undo keeps it).
+        #[arg(long)]
+        delete_backup: bool,
+    },
+    /// Removed courses: undo within 7 days, restore by syncing again after that.
+    Removed,
+    /// Undo a removal, or bring a purged course back by syncing its source.
+    Restore {
+        /// The removed course's id (see `course removed`).
+        removed_id: String,
+    },
+    /// Delete removed courses' data now (or every due removal without ids).
+    Purge {
+        /// The removed courses' ids (see `course removed`).
+        removed_ids: Vec<String>,
+        /// If the Trash can't take the downloaded files, delete them permanently.
+        #[arg(long)]
+        permanent: bool,
+    },
+    /// Forget a purged course: the next sync brings it back.
+    Forget {
+        /// The removed course's id (see `course removed`).
+        removed_id: String,
+    },
     /// "I'm still taking this": count the course as current (by default until its term ends).
     Keep {
         /// The course's code, name or id.
@@ -244,6 +291,33 @@ enum CourseCommand {
         /// on: your AI app may read the material text; off: titles and dates only.
         access: OnOff,
     },
+    /// May this course's materials be shared with an AI service? (Only not-allowed keeps
+    /// material text from cloud models PageLamp runs; your own AI app is unaffected.)
+    Sharing {
+        /// The course's code, name or id.
+        course: String,
+        /// Your answer, e.g. from the syllabus.
+        answer: SharingArg,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SharingArg {
+    Allowed,
+    #[value(alias = "not_sure")]
+    NotSure,
+    #[value(alias = "not_allowed")]
+    NotAllowed,
+}
+
+impl From<SharingArg> for MaterialSharing {
+    fn from(arg: SharingArg) -> Self {
+        match arg {
+            SharingArg::Allowed => MaterialSharing::Allowed,
+            SharingArg::NotSure => MaterialSharing::NotSure,
+            SharingArg::NotAllowed => MaterialSharing::NotAllowed,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -559,6 +633,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             };
             course::list(&app, groups, cli.verbose, json)
         }
+        Command::Ai { command } => {
+            let app = open_app()?;
+            ai::run(&app, command.unwrap_or(ai::AiCommand::Status), json).await
+        }
         Command::Course(command) => {
             let app = open_app()?;
             match command {
@@ -570,6 +648,30 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     until,
                     clear,
                 } => return course::keep(&app, &course, until, clear, json),
+                CourseCommand::Remove {
+                    courses,
+                    dry_run,
+                    now,
+                    keep_files,
+                    delete_backup,
+                } => {
+                    let options = pagelamp_app::RemoveOptions {
+                        reason: None,
+                        keep_downloaded_files: keep_files,
+                        purge_now: now,
+                        delete_pre_update_backup: delete_backup,
+                    };
+                    return course::remove(&app, courses, dry_run, options, json).await;
+                }
+                CourseCommand::Removed => return course::removed(&app, json),
+                CourseCommand::Restore { removed_id } => {
+                    return course::restore(&app, &removed_id, json).await;
+                }
+                CourseCommand::Purge {
+                    removed_ids,
+                    permanent,
+                } => return course::purge(&app, removed_ids, permanent, json).await,
+                CourseCommand::Forget { removed_id } => app.forget_removed_course(&removed_id)?,
                 CourseCommand::Policy {
                     course,
                     policy,
@@ -587,6 +689,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 CourseCommand::Show { course } => app.set_course_hidden(&course, false)?,
                 CourseCommand::AiAccess { course, access } => {
                     app.set_course_ai_access(&course, matches!(access, OnOff::On))?
+                }
+                CourseCommand::Sharing { course, answer } => {
+                    app.set_course_material_sharing(&course, answer.into())?;
+                    if matches!(answer, SharingArg::NotAllowed) && !json {
+                        eprintln!("{}", text::sharing_not_allowed_note());
+                    }
                 }
             }
             if json {
@@ -778,6 +886,18 @@ fn print_doctor(doctor: &diagnostics::DoctorReport) {
         "Courses: {} ({} hidden) · materials: {} · events: {}",
         doctor.courses, doctor.hidden_courses, doctor.materials, doctor.events
     );
+    if doctor.enrollment_window_terms > 0 {
+        println!(
+            "Course terms not used to count weeks (they look like enrollment windows): {}",
+            doctor.enrollment_window_terms
+        );
+    }
+    if doctor.removals_waiting > 0 {
+        println!(
+            "Removed courses waiting (for their purge or for files to go to the Trash): {}",
+            doctor.removals_waiting
+        );
+    }
     if doctor.sources.is_empty() {
         println!(
             "Sources: none (add one with `{} folder add <path>`)",
@@ -819,6 +939,14 @@ fn print_doctor(doctor: &diagnostics::DoctorReport) {
             diagnostics::describe_unreadable(&doctor.unreadable_files)
         );
     }
+    println!(
+        "Model providers: {}",
+        diagnostics::describe_ai_providers(&doctor.ai)
+    );
+    println!(
+        "Local model servers: {}",
+        diagnostics::describe_local_servers(&doctor.ai)
+    );
     if let Some(crash) = &doctor.last_crash {
         println!(
             "Last crash: {} ({}); run `{} report` to include it in an issue",

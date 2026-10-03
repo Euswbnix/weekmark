@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/errors";
 import { createMockApi } from "@/api/mock";
 import { MOCK_APP_VERSION, MOCK_UPDATE_VERSION } from "@/api/mock/fixtures";
+import type { WhatsNewTopic } from "@/api/types";
 import { useSyncStore } from "@/stores/sync";
 import { renderRoute } from "@/test/render";
 
@@ -101,6 +102,32 @@ describe("What's new (upgraders)", () => {
     expect(
       await screen.findByRole("region", { name: `PageLamp was updated to ${MOCK_APP_VERSION}` }),
     ).toBeInTheDocument();
+  });
+
+  it("is read from the top: the title takes the focus, each topic is a heading", async () => {
+    renderRoute("/courses", { scenario: "upgrader" });
+    const sheet = await screen.findByRole("dialog", { name: "What's new in PageLamp" });
+    await waitFor(() => expect(within(sheet).getByRole("heading", { level: 2 })).toHaveFocus());
+    expect(
+      within(sheet)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toContain("PageLamp now updates itself");
+  });
+
+  it("never holds the update check on a topic this build can't show", async () => {
+    const api = mockApi({ scenario: "upgrader" });
+    const original = api.startupTasks;
+    vi.spyOn(api, "startupTasks").mockImplementationOnce(async () => ({
+      ...(await original()),
+      whats_new: { since: null, topics: ["not_a_topic" as WhatsNewTopic] },
+    }));
+    const acknowledge = vi.spyOn(api, "acknowledgeWhatsNew");
+    const check = vi.spyOn(api, "checkForUpdate");
+    renderRoute("/courses", { api });
+    await waitFor(() => expect(acknowledge).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog", { name: "What's new in PageLamp" })).toBeNull();
+    await waitFor(() => expect(check).toHaveBeenCalledTimes(1));
   });
 
   it("isn't shown to anyone else", async () => {

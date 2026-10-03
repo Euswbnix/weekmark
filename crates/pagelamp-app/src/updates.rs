@@ -74,6 +74,7 @@ const CHECK_INTERVAL: TimeDelta = TimeDelta::hours(24);
 const WHATS_NEW: &[(WhatsNewTopic, &str)] = &[
     (WhatsNewTopic::UpdateCheck, "0.3.0-alpha.1"),
     (WhatsNewTopic::CourseWeeks, "0.3.0-alpha.1"),
+    (WhatsNewTopic::CourseRemoval, "0.3.0-alpha.2"),
 ];
 
 /// Where updates come from.
@@ -110,6 +111,8 @@ pub enum WhatsNewTopic {
     UpdateCheck,
     /// Course weeks, phases and the Past group.
     CourseWeeks,
+    /// Removing finished courses: 7 days to undo, the student's own folders untouched.
+    CourseRemoval,
 }
 
 /// What's new since `since` (`None`: an update from 0.1, which didn't record its version).
@@ -365,10 +368,69 @@ mod tests {
 
     #[test]
     fn topics_are_the_ones_introduced_after_the_old_version() {
-        let alpha_1 = [WhatsNewTopic::UpdateCheck, WhatsNewTopic::CourseWeeks];
-        assert_eq!(topics_since(None), alpha_1);
-        assert_eq!(topics_since(Some("0.1.0")), alpha_1);
-        assert!(topics_since(Some("0.3.0-alpha.1")).is_empty());
+        use WhatsNewTopic::*;
+        let all = [UpdateCheck, CourseWeeks, CourseRemoval];
+        assert_eq!(topics_since(None), all);
+        assert_eq!(topics_since(Some("0.1.0")), all);
+        assert_eq!(topics_since(Some("0.3.0-alpha.1")), [CourseRemoval]);
+        assert!(topics_since(Some("0.3.0-alpha.2")).is_empty());
         assert!(topics_since(Some("0.3.0")).is_empty());
+    }
+
+    /// Every topic has a row (the version that introduced it) and desktop copy in both
+    /// languages: a build never announces a topic without words, nor forgets one.
+    #[test]
+    fn every_topic_has_a_row_and_desktop_copy() {
+        fn names(value: &serde_json::Value, out: &mut Vec<String>) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, value) in map {
+                        match (key.as_str(), value) {
+                            ("const", serde_json::Value::String(name)) => out.push(name.clone()),
+                            ("enum", serde_json::Value::Array(list)) => out
+                                .extend(list.iter().filter_map(|v| v.as_str().map(str::to_string))),
+                            _ => names(value, out),
+                        }
+                    }
+                }
+                serde_json::Value::Array(items) => items.iter().for_each(|item| names(item, out)),
+                _ => {}
+            }
+        }
+        let schema = serde_json::to_value(schemars::schema_for!(WhatsNewTopic)).unwrap();
+        let mut topics = Vec::new();
+        names(&schema, &mut topics);
+        topics.sort();
+        topics.dedup();
+        assert!(topics.len() >= 3, "{schema}");
+        let mut rows: Vec<String> = WHATS_NEW
+            .iter()
+            .map(|(topic, _)| {
+                serde_json::to_value(topic)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        rows.sort();
+        assert_eq!(rows, topics, "one WHATS_NEW row per topic");
+        for language in ["en", "zh-CN"] {
+            let path = format!(
+                "{}/../../apps/desktop/src/i18n/locales/{language}/updates.json",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let copy: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            for topic in &topics {
+                for field in ["title", "body"] {
+                    let text = copy["whatsNew"]["topics"][topic][field].as_str();
+                    assert!(
+                        text.is_some_and(|text| !text.trim().is_empty()),
+                        "{language}: whatsNew.topics.{topic}.{field}"
+                    );
+                }
+            }
+        }
     }
 }

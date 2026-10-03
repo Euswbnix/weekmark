@@ -4,6 +4,8 @@
 //!   never cached: a policy change between two runs is always honoured.
 //! - Text comes only from `chunks` of courses that are `readable` at that moment;
 //!   `withheld_by_policy` and `turned_off` courses give structure only, hidden courses nothing.
+//! - Question (b): a course answered `not_allowed` gives no text to a cloud model (a model on
+//!   this computer still gets it). Structure is not material text and is unaffected.
 //! - Structure = titles, kinds, dates, week numbers, deadlines (rule 8). Titles are course
 //!   content too, so structure is wrapped as data like material text.
 //! - Left out of an explanation by default (listed in the summary): materials that look like
@@ -18,7 +20,7 @@ use super::{
     Block, CitationTarget, ContextCourse, GatedContext, LeftOutMaterial, LeftOutReason,
     ManifestEntry,
 };
-use crate::ai::BlockReason;
+use crate::ai::{BlockReason, Destination};
 use crate::model::{AiMaterialsState, Course, MaterialKind, TextStatus};
 use crate::store::Store;
 use crate::views::{self, AsOf, MaterialView};
@@ -142,12 +144,14 @@ pub fn note_context(store: &Store, at: AsOf) -> Result<GatedContext, GateError> 
 }
 
 /// Material text of one course week, for an explanation: blocked unless the course is visible,
-/// `readable` and has readable materials that week (`week`: default the current week).
+/// `readable`, its question-(b) answer allows `destination`, and it has readable materials that
+/// week (`week`: default the current week).
 pub fn week_context(
     store: &Store,
     course: &str,
     week: Option<u32>,
     at: AsOf,
+    destination: Destination,
     budget: ContextBudget,
 ) -> Result<GatedContext, GateError> {
     let result = store.in_read_transaction(|store| {
@@ -161,6 +165,9 @@ pub fn week_context(
             AiMaterialsState::WithheldByPolicy => {
                 return Ok(Err(BlockReason::CoursePolicyProhibited));
             }
+        }
+        if !course.material_sharing.allows(destination) {
+            return Ok(Err(BlockReason::MaterialSharingNotAllowed));
         }
         let listed = views::week_materials(store, &course.id, week, true, at)?;
         let mut context = GatedContext::empty();

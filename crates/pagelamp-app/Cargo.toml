@@ -12,6 +12,7 @@ pagelamp-extract.workspace = true
 pagelamp-canvas.workspace = true
 pagelamp-local.workspace = true
 pagelamp-llm.workspace = true
+url.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 regex.workspace = true
@@ -24,6 +25,9 @@ serde_json.workspace = true
 schemars.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+# Removed courses' downloaded files go to the system Trash (calendar design §8.3, D44): MIT.
+# No chrono listing API; COM apartment-threaded on Windows (IFileOperation needs an STA).
+trash = { version = "=5.2.9", default-features = false, features = ["coinit_apartmentthreaded"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # statfs: is the disk image PageLamp runs from a read-only volume?

@@ -135,6 +135,9 @@ evidence_codes! {
     /// `session`, `section?`, `start`, `end`: the UofT session code bounds the course (bounds
     /// only, never week counts).
     SessionWindow = "session_window",
+    /// `session`: the school's calendar in this version of PageLamp has no dates for the
+    /// session (or the course's campus), so only the session window bounds the course.
+    InstitutionCalendarMissing = "institution_calendar_missing",
 
     // ----- the current week -----
     /// `week`, `monday`: counted from week 1 starting `monday`.
@@ -455,6 +458,11 @@ fn english(item: &EvidenceItem) -> String {
             p("session"),
             opt("section").map(|s| format!(" {s}")).unwrap_or_default(),
             span()
+        ),
+        EvidenceCode::InstitutionCalendarMissing => format!(
+            "The school calendar in this version of PageLamp has no dates for session {}: only \
+             its months bound the course",
+            p("session")
         ),
         EvidenceCode::WeekFromDates => format!(
             "week {} counted from week 1 starting {}",

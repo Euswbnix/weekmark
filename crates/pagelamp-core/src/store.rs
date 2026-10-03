@@ -41,7 +41,14 @@ use rusqlite::{
 use crate::model::*;
 use crate::{Error, Result};
 
-pub const SCHEMA_VERSION: i64 = 3;
+mod ai;
+mod migrate_v4;
+mod tombstones;
+
+pub use ai::USAGE_KEEP_DAYS;
+pub use migrate_v4::COURSE_DATES_CONFIRMED;
+
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Version-1 schema. Applied by `open` when `user_version` is 0.
 pub const SCHEMA_V1: &str = r#"
@@ -202,12 +209,129 @@ UPDATE courses SET user_term_start = NULL WHERE user_term_start = term_start;
 UPDATE courses SET user_term_end   = NULL WHERE user_term_end   = term_end;
 "#;
 
+/// Version 4 (v0.3 M1; docs/design/v0.3-model-access.md §5.4, v0.3-course-calendar.md §3.2), all
+/// additive, so `min_reader_version` stays 3 and a still-running v3 `pagelamp mcp` keeps working:
+/// - AI: `model_providers` (no keys: those live in the keychain), `generations` (validated
+///   output and a summary without text), the usage ledger `ai_usage` (counts and micro-USD
+///   only), `reminders_shown`, `courses.material_sharing` (question (b), written only by the
+///   student), `study_plans.origin` / `generation_id` / `ai_label_json` (the plan's
+///   "AI-generated · backend · model · date" label, kept with the plan);
+/// - course lane: `course_calendars` (proposed / accepted calendars, with evidence), the
+///   removal `course_tombstones`, `courses.calendar_sources` and `institution` (sync-written),
+///   `materials.linked_from_syllabus` / `is_front_page`; plus the data step
+///   `Store::migrate_legacy_calendars` for PageLamp 0.1 term overrides.
+pub const SCHEMA_V4: &str = r#"
+CREATE TABLE model_providers (
+    id              TEXT PRIMARY KEY,
+    preset          TEXT NOT NULL,
+    label           TEXT NOT NULL,
+    wire            TEXT NOT NULL,            -- openai_responses | openai_chat | anthropic_messages | ollama_native
+    base_url        TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    last_probe_json TEXT                      -- the last "Test", no key
+);
+
+CREATE TABLE generations (
+    id             TEXT PRIMARY KEY,          -- the caller's generation id
+    feature        TEXT NOT NULL,             -- AiFeature
+    course_id      TEXT REFERENCES courses(id) ON DELETE CASCADE,
+    week           INTEGER,
+    backend        TEXT NOT NULL,
+    model          TEXT NOT NULL,
+    status         TEXT NOT NULL,             -- draft | accepted | failed | cancelled
+    created_at     TEXT NOT NULL,
+    prompt_version INTEGER NOT NULL,
+    output_json    TEXT,                      -- the validated answer
+    summary_json   TEXT,                      -- context summary + manifest (no text)
+    error_kind     TEXT,
+    week_starts_on TEXT                       -- the week's first day when written (staleness)
+);
+CREATE INDEX generations_course ON generations(course_id, feature, week);
+
+CREATE TABLE ai_usage (
+    id             INTEGER PRIMARY KEY,
+    at             TEXT NOT NULL,
+    backend        TEXT NOT NULL,
+    model          TEXT NOT NULL,
+    feature        TEXT NOT NULL,
+    input_uncached INTEGER NOT NULL,
+    cache_read     INTEGER NOT NULL,
+    cache_write    INTEGER NOT NULL,
+    output         INTEGER NOT NULL,
+    reasoning      INTEGER,
+    micro_usd      INTEGER,                   -- NULL: price unknown, or a plan
+    cost_basis     TEXT NOT NULL,             -- priced | free_on_device | unpriced | plan
+    estimated      INTEGER NOT NULL DEFAULT 0,
+    outcome        TEXT NOT NULL              -- ok | failed | cancelled
+);
+CREATE INDEX ai_usage_at ON ai_usage(at);
+
+CREATE TABLE reminders_shown (
+    id       TEXT PRIMARY KEY,
+    shown_at TEXT NOT NULL
+);
+
+ALTER TABLE courses     ADD COLUMN material_sharing TEXT NOT NULL DEFAULT 'unanswered';
+ALTER TABLE study_plans ADD COLUMN origin           TEXT NOT NULL DEFAULT 'ai_app';
+ALTER TABLE study_plans ADD COLUMN generation_id    TEXT;
+ALTER TABLE study_plans ADD COLUMN ai_label_json    TEXT;     -- origin pagelamp: AiLabel (JSON); stays after "Remove all AI data"
+
+CREATE TABLE course_calendars (
+    id              INTEGER PRIMARY KEY,
+    course_id       TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    origin          TEXT NOT NULL,            -- user | legacy | scan | ai | ai_app | restored
+    state           TEXT NOT NULL,            -- proposed | accepted | dismissed | superseded
+    calendar_json   TEXT NOT NULL,            -- validated CourseCalendar (dates, enums, short labels)
+    evidence_json   TEXT NOT NULL,            -- per date: material_id, locator, quote (≤ 300 chars)
+    checks_json     TEXT NOT NULL,            -- conflicts, drop counts per reason, agreement (no text)
+    manifest_json   TEXT NOT NULL,            -- [{material_id, content_hash, chunk_ords}]
+    fingerprint     TEXT NOT NULL,            -- hash of the candidate set, for dedupe
+    generation_id   TEXT REFERENCES generations(id) ON DELETE SET NULL,
+    backend         TEXT,
+    model           TEXT,
+    prompt_version  INTEGER,
+    created_at      TEXT NOT NULL,
+    decided_at      TEXT
+);
+CREATE UNIQUE INDEX course_calendars_accepted ON course_calendars(course_id) WHERE state = 'accepted';
+CREATE UNIQUE INDEX course_calendars_proposed ON course_calendars(course_id, origin) WHERE state = 'proposed';
+CREATE INDEX course_calendars_course ON course_calendars(course_id);
+
+CREATE TABLE course_tombstones (
+    source_id     TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    external_id   TEXT NOT NULL,
+    course_id     TEXT NOT NULL,
+    code          TEXT,
+    name          TEXT NOT NULL,
+    reason        TEXT NOT NULL,              -- ended | inactive | not_mine | other (display only)
+    state         TEXT NOT NULL,              -- pending | purged | restoring
+    removed_at    TEXT NOT NULL,
+    purge_after   TEXT,                       -- removed_at + 7 days
+    purged_at     TEXT,
+    keep_files    INTEGER NOT NULL DEFAULT 0,
+    files_pending INTEGER NOT NULL DEFAULT 0, -- files still to move to the Trash (or failed); retried
+    delete_backup INTEGER NOT NULL DEFAULT 0, -- delete the pre-update backup at the purge
+    settings_json TEXT NOT NULL,              -- the course's student settings, no quotes
+    PRIMARY KEY (source_id, external_id)
+);
+CREATE INDEX course_tombstones_course ON course_tombstones(course_id);
+
+ALTER TABLE courses   ADD COLUMN calendar_sources     TEXT;     -- the student's candidate edits (JSON)
+ALTER TABLE courses   ADD COLUMN institution          TEXT;     -- sync-written (course.toml), never by setters
+ALTER TABLE materials ADD COLUMN linked_from_syllabus INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE materials ADD COLUMN is_front_page        INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE materials ADD COLUMN named_outline        INTEGER NOT NULL DEFAULT 0;  -- course.toml `outline` (folders)
+
+-- Additive only: a v3 reader still reads this database.
+UPDATE schema_meta SET value = '3' WHERE key = 'min_reader_version';
+"#;
+
 /// Schema migrations, in order: `MIGRATIONS[i]` upgrades a database from `user_version` `i`
 /// to `i + 1`. To change the schema, APPEND a migration (never edit one that has shipped) and
 /// bump `SCHEMA_VERSION`; the assertion below keeps the two in step. A migration that only
 /// adds things keeps `schema_meta.min_reader_version` as it is (older readers can still read
 /// the database); one that changes what readers select must raise it.
-const MIGRATIONS: &[&str] = &[SCHEMA_V1, SCHEMA_V2, SCHEMA_V3];
+const MIGRATIONS: &[&str] = &[SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4];
 const _: () = assert!(MIGRATIONS.len() as i64 == SCHEMA_VERSION);
 
 /// Settings key of the last migration's backup outcome (`MigrationBackupRecord`).
@@ -247,11 +371,12 @@ const COURSE_COLUMNS: &str = "id, source_id, external_id, code, name, \
      CASE WHEN user_term_start IS NOT NULL OR user_term_end IS NOT NULL THEN 'user' \
           WHEN term_start IS NOT NULL OR term_end IS NOT NULL THEN 'synced' \
           ELSE 'none' END AS term_source, \
-     url, ai_policy, ai_policy_note, ai_access, hidden, enrollment_active, updated_at";
+     url, ai_policy, ai_policy_note, ai_access, material_sharing, hidden, enrollment_active, \
+     updated_at";
 const TERM_DATA_COLUMNS: &str = "lms_term_name, lms_term_start, lms_term_end, \
      lms_course_start, lms_course_end, lms_time_zone, lms_concluded, lms_workflow_state, \
      lms_access_restricted, keep_current_until, removal_snoozed_until, term_start, term_end, \
-     user_term_start, user_term_end";
+     user_term_start, user_term_end, institution";
 const MODULE_COLUMNS: &str = "id, course_id, name, position, unlock_at, week_hint";
 const MATERIAL_COLUMNS: &str = "id, course_id, module_id, kind, title, url, local_path, mime, \
      published_at, week_hint, content_hash, text_status, text_error, text_error_kind, \
@@ -381,8 +506,12 @@ impl Store {
             // Read again under the write lock: another process may have migrated meanwhile.
             let current = store.checked_user_version()?;
             // `checked_user_version` guarantees 0 <= current <= MIGRATIONS.len().
-            for migration in &MIGRATIONS[current as usize..] {
+            for (index, migration) in MIGRATIONS.iter().enumerate().skip(current as usize) {
                 store.conn.execute_batch(migration)?;
+                // Data steps that need Rust, right after their schema step.
+                if index + 1 == 4 {
+                    store.migrate_legacy_calendars()?;
+                }
             }
             // After any upgrade: databases written before chunks were tied to `ok` (v0.1) may
             // still hold the text of files locked or moved since.
@@ -754,14 +883,26 @@ impl Store {
     }
 
     /// All courses (including hidden ones when `include_hidden`), ordered by code, name.
+    /// Removed courses (with a tombstone) are never listed: they show under "Removed courses".
     pub fn list_courses(&self, include_hidden: bool) -> Result<Vec<Course>> {
         self.query_list(
             &format!(
                 "SELECT {COURSE_COLUMNS} FROM courses
-                 WHERE hidden = 0 OR ?1
+                 WHERE (hidden = 0 OR ?1)
+                   AND id NOT IN (SELECT course_id FROM course_tombstones)
                  ORDER BY code, name, id"
             ),
             [include_hidden],
+            course_from_row,
+        )
+    }
+
+    /// Every course row, removed ones too (whose local data may still be there): for what
+    /// decides which downloaded folders are still in use.
+    pub fn list_all_courses(&self) -> Result<Vec<Course>> {
+        self.query_list(
+            &format!("SELECT {COURSE_COLUMNS} FROM courses ORDER BY code, name, id"),
+            [],
             course_from_row,
         )
     }
@@ -1159,6 +1300,27 @@ impl Store {
         Ok(counts)
     }
 
+    /// The outline a folder's `course.toml` names (`outline = "…"`): that material is flagged,
+    /// the course's others not (`None`: none named).
+    /// The school a folder course names in `course.toml` (`institution`; sync-written, never by a
+    /// setter the student uses): it opts the course into the session hint and the school's
+    /// calendar (calendar design §6.3, §6.4).
+    pub fn set_course_institution(&self, course_id: &str, institution: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE courses SET institution = ?2 WHERE id = ?1",
+            params![course_id, institution],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_named_outline(&self, course_id: &str, material_id: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE materials SET named_outline = (id IS ?2) WHERE course_id = ?1",
+            params![course_id, material_id],
+        )?;
+        Ok(())
+    }
+
     /// Record why a file cannot be downloaded on request (`None` clears it).
     pub fn set_download_blocked(
         &self,
@@ -1476,7 +1638,10 @@ impl Store {
         })
     }
 
-    /// The most recently saved plan (highest id).
+    /// The most recently saved plan (highest id), without the items of removed courses: the
+    /// stored JSON keeps them (calendar design §8.3), every reader (the app, the MCP server,
+    /// the digest, the weekly note) leaves them out. A write by item index must read the
+    /// stored plan itself.
     pub fn latest_study_plan(&self) -> Result<Option<StoredStudyPlan>> {
         let row = self.query_opt(
             "SELECT id, created_at, plan_json FROM study_plans ORDER BY id DESC LIMIT 1",
@@ -1491,10 +1656,20 @@ impl Store {
         let Some((id, created_at, plan_json)) = row else {
             return Ok(None);
         };
+        let mut plan: StudyPlan = serde_json::from_str(&plan_json)?;
+        let removed: Vec<String> =
+            self.query_list("SELECT course_id FROM course_tombstones", [], |row| {
+                row.get(0)
+            })?;
+        plan.items.retain(|item| {
+            item.course_id
+                .as_ref()
+                .is_none_or(|id| !removed.contains(id))
+        });
         Ok(Some(StoredStudyPlan {
             id,
             created_at,
-            plan: serde_json::from_str(&plan_json)?,
+            plan,
         }))
     }
 
@@ -1567,8 +1742,11 @@ impl Store {
     /// Row counts (see `StoreCounts` for what each number means).
     pub fn counts(&self) -> Result<StoreCounts> {
         let sql = "SELECT
-            (SELECT COUNT(*) FROM courses WHERE hidden = 0) AS courses,
-            (SELECT COUNT(*) FROM courses WHERE hidden <> 0) AS hidden_courses,
+            (SELECT COUNT(*) FROM courses WHERE hidden = 0
+               AND id NOT IN (SELECT course_id FROM course_tombstones)) AS courses,
+            (SELECT COUNT(*) FROM courses WHERE hidden <> 0
+               AND id NOT IN (SELECT course_id FROM course_tombstones)) AS hidden_courses,
+            (SELECT COUNT(*) FROM course_tombstones) AS removed_courses,
             (SELECT COUNT(*) FROM modules) AS modules,
             (SELECT COUNT(*) FROM materials) AS materials,
             (SELECT COUNT(*) FROM materials m
@@ -1588,6 +1766,7 @@ impl Store {
                 chunks: row.get("chunks")?,
                 events: row.get("events")?,
                 study_plans: row.get("study_plans")?,
+                removed_courses: row.get("removed_courses")?,
             })
         })?)
     }
@@ -1985,6 +2164,7 @@ fn course_from_row(row: &Row<'_>) -> rusqlite::Result<Course> {
         ai_policy: get_value(row, "ai_policy")?,
         ai_policy_note: row.get("ai_policy_note")?,
         ai_access: row.get("ai_access")?,
+        material_sharing: get_value(row, "material_sharing")?,
         enrollment_active: row.get("enrollment_active")?,
         hidden: row.get("hidden")?,
         updated_at: get_value(row, "updated_at")?,
@@ -2010,6 +2190,7 @@ fn term_data_from_row(row: &Row<'_>) -> rusqlite::Result<CourseTermData> {
         synced_term_end: get_opt_value(row, "term_end")?,
         user_term_start: get_opt_value(row, "user_term_start")?,
         user_term_end: get_opt_value(row, "user_term_end")?,
+        institution: row.get("institution")?,
     })
 }
 
@@ -2207,6 +2388,26 @@ impl TextValue for TextStatus {
 impl TextValue for TextErrorKind {
     fn parse_text(text: &str) -> Option<Self> {
         variant_named(text, &TextErrorKind::ALL, TextErrorKind::as_str)
+    }
+}
+
+impl TextValue for crate::ai::MaterialSharing {
+    fn parse_text(text: &str) -> Option<Self> {
+        variant_named(
+            text,
+            &crate::ai::MaterialSharing::ALL,
+            crate::ai::MaterialSharing::as_str,
+        )
+    }
+}
+
+impl TextValue for crate::ai::AiFeature {
+    fn parse_text(text: &str) -> Option<Self> {
+        variant_named(
+            text,
+            &crate::ai::AiFeature::ALL,
+            crate::ai::AiFeature::as_str,
+        )
     }
 }
 

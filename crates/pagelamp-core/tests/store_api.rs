@@ -381,6 +381,7 @@ fn remove_source_cascades_to_everything() {
             chunks: 0,
             events: 1,
             study_plans: 1,
+            removed_courses: 0,
         }
     );
     assert_eq!(fts_rows(&store), 0);
@@ -1694,6 +1695,7 @@ fn counts_reflect_contents() {
             chunks: 2,
             events: 1,
             study_plans: 1,
+            removed_courses: 0,
         }
     );
 }

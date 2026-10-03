@@ -195,8 +195,8 @@ struct CourseDeadlinesTests {
             WeekMaterials(
                 course: Course(
                     id: "c", sourceId: "s", externalId: "c", code: "C", name: "C", termStart: nil, termEnd: nil,
-                    termSource: .none, url: nil, aiPolicy: .unknown, aiPolicyNote: nil, aiAccess: true, hidden: false,
-                    enrollmentActive: true, updatedAt: TestClock.now
+                    termSource: .none, url: nil, aiPolicy: .unknown, aiPolicyNote: nil, aiAccess: true,
+                    materialSharing: .unanswered, hidden: false, enrollmentActive: true, updatedAt: TestClock.now
                 ),
                 aiMaterials: .readable, week: nil, requestedWeek: nil, timeline: timeline(week: nil),
                 modules: [], materials: [], availableWeeks: [], note: note, noteKind: kind

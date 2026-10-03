@@ -266,12 +266,12 @@ export function course(spec: CourseSpec, now: Date): Course {
     ai_policy: spec.policy,
     ai_policy_note: spec.policyNote,
     ai_access: spec.aiAccess ?? true,
+    material_sharing: spec.materialSharing ?? "unanswered",
     enrollment_active: spec.enrollmentActive ?? true,
     term_source: spec.userTerm ? "user" : spec.termStartDays === null ? "none" : "synced",
     hidden: spec.hidden,
     updated_at: at(now, -1, 9),
   };
-  if (spec.materialSharing) c.material_sharing = spec.materialSharing;
   return c;
 }
 

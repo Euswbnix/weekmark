@@ -13,6 +13,7 @@ function summary(id: string, code: string | null, hidden = false): CourseSummary
       source_id: "folder:test",
       hidden,
       ai_access: true,
+      material_sharing: "unanswered",
       term_source: "none",
       enrollment_active: true,
       ai_policy: "unknown",

@@ -20,6 +20,8 @@ import type { MockCourse, MockDb, MockScenario } from "./fixtures";
 interface MockRemoved {
   record: RemovedCourse;
   course: MockCourse;
+  /** "Also delete the pre-update backup": done with this removal's purge. */
+  deleteBackup: boolean;
 }
 
 type LifecycleApi = Pick<
@@ -57,7 +59,6 @@ export function createLifecycleMock(deps: {
   const snoozes = new Map<string, string>();
   let banner: { until: string; courses: string[] } | null = null;
   const removed: MockRemoved[] = [];
-  let removedSeq = 0;
 
   const sourceKind = (sourceId: string): SourceKind =>
     db.sources.find((s) => s.id === sourceId)?.kind ?? "folder";
@@ -131,11 +132,17 @@ export function createLifecycleMock(deps: {
     return state === "ended" ? "ended" : state === "inactive" ? "inactive" : "other";
   }
 
-  function removeOne(c: MockCourse, reason: RemovalReason, purgeNow: boolean, keepFiles: boolean) {
-    removedSeq += 1;
+  function removeOne(
+    c: MockCourse,
+    reason: RemovalReason,
+    purgeNow: boolean,
+    keepFiles: boolean,
+    deleteBackup = false,
+  ) {
     const at = now().toISOString();
     const record: RemovedCourse = {
-      removed_id: `removed-${removedSeq}`,
+      // Like the facade's tombstone, keyed by the course id.
+      removed_id: c.course.id,
       source_id: c.course.source_id,
       source_kind: sourceKind(c.course.source_id),
       external_id: c.course.external_id,
@@ -152,7 +159,7 @@ export function createLifecycleMock(deps: {
       keep_files: keepFiles,
       files_pending: false,
     };
-    removed.unshift({ record, course: c });
+    removed.unshift({ record, course: c, deleteBackup: deleteBackup && !purgeNow });
     db.courses = db.courses.filter((x) => x !== c);
     return record;
   }
@@ -169,8 +176,9 @@ export function createLifecycleMock(deps: {
     }
   }
 
-  // Scenario "removed": two courses removed a few days ago, one purged (its files couldn't go
-  // to the Trash), so the "Removed courses" list has every kind of row.
+  // Scenario "removed": courses removed a few days ago, in every state "Removed courses" shows:
+  // pending, purged with its files waiting for the Trash, purged with its files kept, and a
+  // restore that didn't finish.
   if (deps.scenario === "removed") {
     const [a, b, c] = db.courses.filter((x) => x.lifecycle.group === "past");
     if (a) {
@@ -184,6 +192,11 @@ export function createLifecycleMock(deps: {
       r.files_pending = true;
     }
     if (c) removeOne(c, "inactive", true, true);
+    const [d] = db.courses.filter((x) => x.lifecycle.group === "past");
+    if (d) {
+      const r = removeOne(d, "ended", true, false);
+      r.state = "restoring";
+    }
   }
 
   const api: LifecycleApi = {
@@ -227,12 +240,15 @@ export function createLifecycleMock(deps: {
             options.reason ?? reasonFor(c),
             options.purge_now,
             options.keep_downloaded_files,
+            options.delete_pre_update_backup,
           ),
         );
         return {
           removed: records,
           purged_now: options.purge_now,
-          backup_deleted: options.delete_pre_update_backup,
+          // Like the facade: the backup goes with the purge, never at stage 1.
+          backup_deleted: options.delete_pre_update_backup && options.purge_now,
+          backup_failed: false,
         };
       }, 150),
 
@@ -243,12 +259,14 @@ export function createLifecycleMock(deps: {
         busyCheck();
         const entry = findRemoved(removedId);
         const { record } = entry;
-        if (record.state === "purged" && restricted(record.code)) {
+        // A purged course, or a restore that didn't finish, comes back by syncing its source.
+        const synced = record.state !== "pending";
+        if (synced && restricted(record.code)) {
           // Canvas restricts access to this one: a sync can't bring it back.
           return { restored: false, course_id: null, failure: "access_restricted" as const };
         }
         const course = entry.course;
-        if (record.state === "purged") {
+        if (synced) {
           // Synced again: Canvas files come back as "not downloaded".
           course.materials = course.materials.map((m) =>
             m.kind === "file" && record.source_kind === "canvas"
@@ -264,31 +282,55 @@ export function createLifecycleMock(deps: {
     purgeRemovedCourses: (removedIds, permanentIfNoTrash) =>
       respond(() => {
         busyCheck();
-        const due = removed.filter((r) =>
-          removedIds
-            ? removedIds.includes(r.record.removed_id)
-            : r.record.state === "pending" &&
-              Date.parse(r.record.purge_after ?? "") <= now().getTime(),
+        // Without ids: every due removal, and the purged ones whose files wait for the Trash. A
+        // restore in progress is skipped either way.
+        const due = (removedIds ? removedIds.map(findRemoved) : removed).filter(
+          (r) => r.record.state !== "restoring",
         );
+        const targets = removedIds
+          ? due
+          : due.filter(
+              (r) =>
+                (r.record.state === "pending" &&
+                  Date.parse(r.record.purge_after ?? "") <= now().getTime()) ||
+                (r.record.state === "purged" && r.record.files_pending),
+            );
         const purged: string[] = [];
         const filesPending: string[] = [];
-        for (const r of due) {
+        let backupDeleted = false;
+        for (const r of targets) {
           if (r.record.state === "pending") {
             r.record.state = "purged";
             r.record.purged_at = now().toISOString();
             r.record.purge_after = null;
             r.record.purge_in_days = null;
             purged.push(r.record.removed_id);
+            if (r.deleteBackup) backupDeleted = true;
+            r.deleteBackup = false;
           }
+          // The mock's Trash keeps failing for a course whose move already failed: only "Delete
+          // permanently" (permanentIfNoTrash) clears it.
           if (r.record.files_pending && permanentIfNoTrash) r.record.files_pending = false;
           if (r.record.files_pending) filesPending.push(r.record.removed_id);
         }
-        return { purged, files_pending: filesPending };
+        return {
+          purged,
+          files_pending: filesPending,
+          backup_deleted: backupDeleted,
+          backup_failed: false,
+        };
       }),
 
     forgetRemovedCourse: (removedId) =>
       respond(() => {
+        busyCheck();
         const entry = findRemoved(removedId);
+        if (entry.record.files_pending) {
+          throw new ApiError(
+            "invalid",
+            "Its files are still waiting for the Trash: try again or delete them permanently first.",
+          );
+        }
         if (entry.record.state !== "purged") {
           throw new ApiError(
             "invalid",

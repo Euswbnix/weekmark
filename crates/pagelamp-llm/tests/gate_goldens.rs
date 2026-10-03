@@ -2,6 +2,7 @@
 //! actually sends never contains text of a course that isn't `readable`, for an explanation
 //! context and a structure-only plan context. Synthetic DEMO courses with canary words.
 
+use pagelamp_core::ai::Destination;
 use pagelamp_core::ai::Effort;
 use pagelamp_core::ai_gate::{ContextBudget, PlanScope, assemble, plan_context, week_context};
 use pagelamp_core::model::*;
@@ -122,6 +123,7 @@ fn no_wire_ever_sends_text_of_a_course_that_is_not_readable() {
         "DEMO101",
         Some(3),
         at,
+        Destination::Cloud,
         ContextBudget { max_chars: 100_000 },
     )
     .unwrap();

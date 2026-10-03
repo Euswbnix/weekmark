@@ -6,8 +6,9 @@
 //! ever a bound: it never counts weeks, and on its own it never ends a course.
 //!
 //! Only for courses synced from `q.utoronto.ca` (a 5-digit number means something else at
-//! other schools). Folder sources opt in with `institution = "uoft"` in `course.toml` from
-//! alpha.2 (schema v4 column). The windows are month bounds [unverified; A15 confirms]:
+//! other schools), and folder courses whose `course.toml` says `institution = "uoft"` (the
+//! schema v4 column `courses.institution`). The windows are month bounds [unverified; A15
+//! confirms]:
 //!
 //! | Session | Section   | Window                            |
 //! |---------|-----------|-----------------------------------|
@@ -55,9 +56,12 @@ static CODE_SECTION: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid regex")
 });
 
-/// The hint for `course`, host-gated (see the module docs).
-pub fn session_hint(course: &Course) -> Option<SessionHint> {
-    if !UOFT_CANVAS_SOURCES.contains(&course.source_id.as_str()) {
+/// The hint for `course`, host-gated: a UofT Canvas host, or a folder course whose
+/// `course.toml` names `institution` "uoft" (see the module docs).
+pub fn session_hint(course: &Course, institution: Option<&str>) -> Option<SessionHint> {
+    let uoft = UOFT_CANVAS_SOURCES.contains(&course.source_id.as_str())
+        || (course.source_id.starts_with("folder:") && institution == Some("uoft"));
+    if !uoft {
         return None;
     }
     parse_uoft_session(course.code.as_deref(), &course.name)
@@ -135,6 +139,7 @@ mod tests {
             ai_policy: AiPolicy::Unknown,
             ai_policy_note: None,
             ai_access: true,
+            material_sharing: Default::default(),
             hidden: false,
             enrollment_active: true,
             updated_at: chrono::Utc::now(),
@@ -217,14 +222,28 @@ mod tests {
             Some("DEM332H5 F LEC0101 20269"),
             "Demo Methods",
         );
-        assert!(session_hint(&uoft).is_some());
+        assert!(session_hint(&uoft, None).is_some());
         for source in [
             "canvas:lms.example.edu",
             "canvas:q.utoronto.ca.example.com",
             "folder:3f2a",
         ] {
             let other = course(source, Some("DEM332H5 F LEC0101 20269"), "Demo Methods");
-            assert!(session_hint(&other).is_none(), "{source}");
+            assert!(session_hint(&other, None).is_none(), "{source}");
         }
+        // A folder opts in with `institution = "uoft"` in course.toml; a Canvas host can't.
+        let folder = course(
+            "folder:3f2a",
+            Some("DEM332H5 F LEC0101 20269"),
+            "Demo Methods",
+        );
+        assert!(session_hint(&folder, Some("uoft")).is_some());
+        assert!(session_hint(&folder, Some("other")).is_none());
+        let canvas = course(
+            "canvas:lms.example.edu",
+            Some("DEM332H5 F LEC0101 20269"),
+            "Demo Methods",
+        );
+        assert!(session_hint(&canvas, Some("uoft")).is_none());
     }
 }

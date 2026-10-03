@@ -1,0 +1,27 @@
+# The University of Toronto's published sessional dates, per academic year and campus, for the
+# school's calendar anchor (docs/design/v0.3-course-calendar.md §6.4, anchor 5; owner action A15).
+#
+# Only dates checked against UofT's published sessional dates go in this file: never estimated
+# or made-up ones (test data lives with the tests). Until a year is added, its courses fall back
+# to the session window (§6.3). Each year lists all three campuses (1 St. George, 3 Scarborough,
+# 5 Mississauga), or names the ones it lacks in `missing_campuses`.
+#
+# Dates are quoted: "2026-09-08". One [[years]] table per academic year:
+#
+# [[years]]
+# year = "2026-27"
+# source = "UofT sessional dates 2026-27, checked on …"
+# missing_campuses = []
+# [[years.sessions]]
+# session = "20269"          # Fall 2026 (20271 Winter 2027, 20275 Summer 2027)
+# campus = 5
+# section = "F"              # Summer only: "F" or "S"; leave out for the whole session
+# first_class = "…"
+# last_class = "…"
+# exams_start = "…"
+# exams_end = "…"
+# breaks = [{ kind = "reading_week", start = "…", end = "…" }]
+
+format = 1
+institution = "uoft"
+years = []

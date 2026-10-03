@@ -148,7 +148,11 @@ fn an_upgrade_from_0_1_shows_whats_new_before_the_first_check() {
     assert_eq!(whats_new.since, None, "0.1 didn't record its version");
     assert_eq!(
         whats_new.topics,
-        [WhatsNewTopic::UpdateCheck, WhatsNewTopic::CourseWeeks]
+        [
+            WhatsNewTopic::UpdateCheck,
+            WhatsNewTopic::CourseWeeks,
+            WhatsNewTopic::CourseRemoval,
+        ]
     );
     assert_eq!(tasks.updated_from, None);
     assert!(!tasks.update_check_due, "not while What's new waits");

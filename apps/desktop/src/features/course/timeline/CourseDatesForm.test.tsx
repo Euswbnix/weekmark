@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { openCourse } from "../testing";
 
-// The dates form v2 (behind REMOVAL_UI, which is on in tests). Courses of the uoft-fall and
+// The dates form v2 (behind DATES_V2_UI, which is on in tests). Courses of the uoft-fall and
 // phases mock scenarios.
 const UNLABELLED = "canvas:canvas.demo.test/course/240";
 const FULL_YEAR = "canvas:canvas.demo.test/course/PHS180";
