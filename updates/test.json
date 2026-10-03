@@ -1,0 +1,19 @@
+{
+  "version": "0.3.0-alpha.0.3",
+  "notes": "Rehearsal build 20d5180 (test channel)",
+  "pub_date": "2026-10-03T22:24:17Z",
+  "platforms": {
+    "darwin-aarch64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRVUR3ZXZsbm14aHZsUVdCaTBnQ1VlTWRYeGZwa2htWVBrNkQxRmtZVDVNMk9aY3dHMmhHRE1CZng2YUJTd1pubVdRVmlXV0QvNjdQN05ZUDVWdFBHeCtndStaN1Vvd0F3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDY2MjM3CWZpbGU6UGFnZUxhbXBfMC4zLjBfdW5pdmVyc2FsLmFwcC50YXIuZ3oJdmVyc2lvbjowLjMuMC1hbHBoYS4wLjMKUUdlSHdlalNzb3N0dUYwTmtSRHR6dnBNWjJPRUFiZWxxSk8ySlBONkZGb2VmVGtnQ3lxRGNNRGNwb0QwczJwWFl1L2EwdHZDd1hzTVpLc1VpYkdCRFE9PQo=",
+      "url": "https://euswbnix.github.io/pagelamp/updates/test/20d5180/PageLamp_0.3.0_universal.app.tar.gz"
+    },
+    "darwin-x86_64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRVUR3ZXZsbm14aHZsUVdCaTBnQ1VlTWRYeGZwa2htWVBrNkQxRmtZVDVNMk9aY3dHMmhHRE1CZng2YUJTd1pubVdRVmlXV0QvNjdQN05ZUDVWdFBHeCtndStaN1Vvd0F3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDY2MjM3CWZpbGU6UGFnZUxhbXBfMC4zLjBfdW5pdmVyc2FsLmFwcC50YXIuZ3oJdmVyc2lvbjowLjMuMC1hbHBoYS4wLjMKUUdlSHdlalNzb3N0dUYwTmtSRHR6dnBNWjJPRUFiZWxxSk8ySlBONkZGb2VmVGtnQ3lxRGNNRGNwb0QwczJwWFl1L2EwdHZDd1hzTVpLc1VpYkdCRFE9PQo=",
+      "url": "https://euswbnix.github.io/pagelamp/updates/test/20d5180/PageLamp_0.3.0_universal.app.tar.gz"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRVUR3ZXZsbm14aGtMRnJ6TzBGR2ZnMXFib2lKWUZJVkU5TVV1QlFGRit6blp2cVNhYXN6QkZIMGdKaU5lTzF5VXY5akxjM1VJN3JCdTl2UG4zOEVZTzA4WG1EVm55V2dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDY1NTA4CWZpbGU6UGFnZUxhbXBfMC4zLjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMy4wLWFscGhhLjAuMwppa2VpQWxReVBncHNBdC9JcjY5Zm0yczJlcHVnQUJYWGN3ckF1cjh6VVRSM0hHSUh6NzJOMnRuZSt4T08vL1gxVjlwWFZsYWhBa2tZQmY5cWVYdlBCQT09Cg==",
+      "url": "https://euswbnix.github.io/pagelamp/updates/test/20d5180/PageLamp_0.3.0_x64-setup.exe"
+    }
+  }
+}
