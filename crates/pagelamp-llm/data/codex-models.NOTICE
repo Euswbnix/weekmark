@@ -1,0 +1,13 @@
+codex-models.json holds the entries of the models PageLamp's Codex pin supports (see
+codex-pin.toml), copied unchanged from OpenAI Codex:
+
+  https://github.com/openai/codex, file codex-rs/models-manager/models.json, tag rust-v0.158.0
+  Copyright 2025 OpenAI
+  Licensed under the Apache License, Version 2.0 (the same licence as PageLamp; see LICENSE at
+  the repository root, or http://www.apache.org/licenses/LICENSE-2.0).
+
+Modification notice (Apache-2.0 §4(b)): at run time PageLamp derives a catalog from these
+entries in which only two fields differ, `tool_mode` ("direct") and `shell_type` ("disabled"),
+and points Codex's documented `model_catalog_json` setting at it, so the model gets no code-mode
+or shell tool. The Codex binary itself is never modified. The pin-bump procedure re-copies the
+entries from the new tag's models.json.

@@ -5,6 +5,7 @@
 //! Model code is in `pagelamp-llm` (drivers) and `pagelamp_core::ai_gate` (the only producer of
 //! prompt text).
 
+pub(crate) mod codex;
 mod estimate;
 pub mod prompts;
 mod providers;
@@ -12,6 +13,7 @@ mod settings;
 mod types;
 mod usage;
 
+pub use codex::{CHATGPT_PLAN_OFFERED, DEFAULT_WEEKLY_CAP};
 pub use types::*;
 
 use std::time::Duration;
@@ -87,6 +89,47 @@ impl App {
         let acks = settings::disclosures(&store)?;
         let mut providers = Vec::new();
         let mut backends = Vec::new();
+        let routing = settings::routing(&store)?;
+        // The ChatGPT plan first (design §2.1's order), once it is set up or chosen.
+        let codex_chosen = routing
+            .0
+            .values()
+            .any(|choice| choice.backend == BackendRef::Codex);
+        // Not offered in this build: no Codex backend at all (the UIs hide the card).
+        if self.chatgpt_plan_offered() && (self.codex_installed() || codex_chosen) {
+            let disclosure = self.disclosure(&BackendRef::Codex)?;
+            let acknowledged = acks
+                .get(&settings::backend_key(&BackendRef::Codex))
+                .map(|a| a.version);
+            let mut problems = Vec::new();
+            if !self.codex_installed() {
+                problems.push(BackendProblem::RuntimeMissing);
+            }
+            if self.codex_login_cached() != Some(CodexLoginState::Chatgpt) {
+                problems.push(BackendProblem::NotSignedIn);
+            }
+            if acknowledged.is_some_and(|version| version != disclosure.version) {
+                problems.push(BackendProblem::DisclosureChanged);
+            }
+            let state = if problems.contains(&BackendProblem::RuntimeMissing)
+                || problems.contains(&BackendProblem::NotSignedIn)
+            {
+                BackendState::NeedsSetup
+            } else if acknowledged != Some(disclosure.version) {
+                BackendState::NeedsDisclosure
+            } else {
+                BackendState::Ready
+            };
+            backends.push(AiBackendStatus {
+                backend: BackendRef::Codex,
+                label: "ChatGPT plan (through OpenAI Codex)".to_string(),
+                kind: BackendKind::Codex,
+                state,
+                problems,
+                disclosure,
+                disclosure_acknowledged: acknowledged,
+            });
+        }
         for (record, provider) in self.provider_records(&store)? {
             let backend = BackendRef::Provider {
                 provider_id: record.provider_id.clone(),
@@ -124,7 +167,6 @@ impl App {
             });
             providers.push(record);
         }
-        let routing = settings::routing(&store)?;
         let features = AiFeature::ALL
             .iter()
             .map(|feature| FeatureRouting {
@@ -133,6 +175,7 @@ impl App {
             })
             .collect();
         Ok(AiStatus {
+            chatgpt_plan_offered: self.chatgpt_plan_offered(),
             backends,
             providers,
             features,
@@ -168,6 +211,10 @@ impl App {
 
     /// The models a backend offers: its live list with PageLamp's price and capability data.
     pub async fn list_models(&self, backend: &BackendRef) -> Result<Vec<ModelInfo>> {
+        if *backend == BackendRef::Codex {
+            self.require_chatgpt_plan()?;
+            return Ok(self.codex_models());
+        }
         let provider = self.provider_for(backend)?;
         let profile = provider.profile.clone();
         let local = profile.on_device();
@@ -197,6 +244,9 @@ impl App {
     /// "Test": a tiny request with no course data. A model that answers badly or refuses the
     /// key is a report with `ok: false`, not an error; the last test is kept with the provider.
     pub async fn test_model(&self, backend: &BackendRef, model: &str) -> Result<ProbeReport> {
+        if *backend == BackendRef::Codex {
+            return self.codex_test(model).await;
+        }
         let provider = self.provider_for(backend)?;
         let provider_id = provider.row.id.clone();
         let thinking = provider.profile.model_quirks(model).thinking_always_on;
@@ -233,7 +283,12 @@ impl App {
     /// Which model a feature uses (`None`: none). The backend must exist.
     pub fn set_feature_model(&self, feature: AiFeature, choice: Option<ModelChoice>) -> Result<()> {
         if let Some(choice) = &choice {
-            self.provider_profile(&choice.backend)?;
+            if choice.backend == BackendRef::Codex {
+                self.require_chatgpt_plan()?;
+                codex::check_codex_model(&choice.model)?;
+            } else {
+                self.provider_profile(&choice.backend)?;
+            }
             if choice.model.trim().is_empty() {
                 return Err(AppError::new(AppErrorKind::Invalid, "Choose a model."));
             }
@@ -251,7 +306,10 @@ impl App {
     /// The student read a backend's disclosure. `version` must be the one currently shown:
     /// facts that changed since are asked again.
     pub fn acknowledge_ai_disclosure(&self, backend: &BackendRef, version: u32) -> Result<()> {
-        let current = disclosure_for(&self.provider_profile(backend)?).version;
+        if *backend == BackendRef::Codex {
+            self.require_chatgpt_plan()?;
+        }
+        let current = self.disclosure(backend)?.version;
         if version != current {
             return Err(AppError::new(
                 AppErrorKind::Invalid,
@@ -274,6 +332,12 @@ impl App {
     /// "The budget is not enforced for this model": needed before the first run of a model
     /// without a known price.
     pub fn acknowledge_unpriced_model(&self, backend: &BackendRef, model: &str) -> Result<()> {
+        if *backend == BackendRef::Codex {
+            return Err(AppError::new(
+                AppErrorKind::Invalid,
+                "Runs with the ChatGPT plan have no price to acknowledge.",
+            ));
+        }
         self.provider_profile(backend)?;
         let store = self.write_store()?;
         let mut acks = settings::unpriced(&store)?;
@@ -320,6 +384,8 @@ impl App {
     /// Keys, providers, generations, the usage ledger, AI settings and the pre-update backup
     /// (from schema 4 on it holds AI data too; the result says it was removed).
     pub fn remove_all_ai_data(&self) -> Result<RemoveAiDataReport> {
+        // Codex first: its sign-in ends before its folder goes (Busy if Codex is running).
+        self.forget_codex()?;
         let store = self.write_store()?;
         let keyed: Vec<String> = store
             .model_providers()?
@@ -451,6 +517,16 @@ fn accepts_connections(url: &url::Url) -> bool {
     })
 }
 
+impl App {
+    /// The disclosure facts of any backend (Codex: with the plan type as far as known).
+    pub(crate) fn disclosure(&self, backend: &BackendRef) -> Result<DisclosureFacts> {
+        match backend {
+            BackendRef::Codex => Ok(codex::codex_disclosure(None)),
+            _ => Ok(disclosure_for(&self.provider_profile(backend)?)),
+        }
+    }
+}
+
 /// The disclosure facts of an API-key or local provider.
 pub(crate) fn disclosure_for(provider: &ProviderProfile) -> DisclosureFacts {
     let policy = &provider.data_policy;
@@ -481,7 +557,7 @@ pub(crate) fn disclosure_for(provider: &ProviderProfile) -> DisclosureFacts {
             Retention::ProviderTerms => RetentionFact::ProviderTerms,
             Retention::OnDevice => RetentionFact::OnDevice,
         },
-        admin_visibility: false,
+        admin_visibility: AdminVisibility::No,
         min_age: policy.min_age,
         guardian_permission: policy.guardian_permission,
         cost: if on_device {

@@ -71,7 +71,7 @@ export function FeatureModels({
         <p className="text-sm text-muted-foreground">{t("features.turnOnFirst")}</p>
       ) : (
         <>
-          <ul className="divide-y rounded-lg border">
+          <ul className="divide-y border-y">
             {AI_FEATURES.map((feature) => (
               <FeatureRow
                 key={feature}
@@ -149,7 +149,7 @@ function FeatureRow({
   }
 
   return (
-    <li className="space-y-2 p-3">
+    <li className="space-y-2 py-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span id={nameId} className="min-w-40 flex-1 text-sm font-medium">
           {name}

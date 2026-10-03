@@ -8,8 +8,9 @@ use chrono::{Datelike, NaiveDate};
 use clap::{Subcommand, ValueEnum};
 use pagelamp_app::App;
 use pagelamp_app::ai::{
-    AiBackendStatus, BackendRef, BackendState, CostBasis, CostEstimate, EstimateRequest,
-    ModelChoice, StructuredOutputTier,
+    AiBackendStatus, BackendRef, BackendState, CodexLoginMethod, CodexLoginState,
+    CodexOutdatedAction, CodexRuntimeState, CodexSource, CodexStatus, CostBasis, CostEstimate,
+    EstimateRequest, LoginEvent, ModelChoice, RuntimeEvent, StructuredOutputTier,
 };
 use pagelamp_core::ai::{AiFeature, Effort};
 use pagelamp_core::brand::CLI_NAME;
@@ -78,6 +79,11 @@ pub enum AiCommand {
         /// Don't ask the provider for its model list (for a model it doesn't list).
         #[arg(long)]
         no_check: bool,
+    },
+    /// The ChatGPT plan through OpenAI's Codex: install, sign in, the weekly cap (default: status).
+    Codex {
+        #[command(subcommand)]
+        command: Option<CodexCommand>,
     },
     /// Tokens and estimated cost of a month.
     Usage {
@@ -376,6 +382,9 @@ pub async fn run(app: &App, command: AiCommand, json: bool) -> anyhow::Result<()
                 }
             }
         }
+        AiCommand::Codex { command } => {
+            codex(app, command.unwrap_or(CodexCommand::Status), json).await
+        }
         AiCommand::Usage { month } => {
             let summary = app.usage_summary(month)?;
             if json {
@@ -479,6 +488,185 @@ pub async fn run(app: &App, command: AiCommand, json: bool) -> anyhow::Result<()
     }
 }
 
+#[derive(Subcommand)]
+pub enum CodexCommand {
+    /// The runtime, the sign-in and this week's runs (default).
+    Status,
+    /// Download and verify the Codex version PageLamp is tested with (≈70–80 MB).
+    Install,
+    /// Delete the downloaded Codex (the sign-in stays until `codex logout`).
+    Remove,
+    /// Sign in to ChatGPT through Codex (opens the browser).
+    Login {
+        /// Use a one-time code instead of the browser (enable it in ChatGPT's security settings).
+        #[arg(long)]
+        device_code: bool,
+    },
+    /// Sign out of ChatGPT in PageLamp's Codex.
+    Logout,
+    /// Show or set the weekly run cap (a number, or `off`).
+    Cap { runs: Option<String> },
+    /// Run PageLamp's Codex (`managed`) or your own installed one in the tested range (`system`).
+    Use { source: SourceArg },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum SourceArg {
+    Managed,
+    System,
+}
+
+async fn codex(app: &App, command: CodexCommand, json: bool) -> anyhow::Result<()> {
+    // Status and sign-out (clean-up) work in every build; the rest needs the ChatGPT plan.
+    if !matches!(command, CodexCommand::Status | CodexCommand::Logout) {
+        app.require_chatgpt_plan()?;
+    }
+    let status = match command {
+        CodexCommand::Status => app.codex_status().await?,
+        CodexCommand::Install => {
+            let before = app.codex_status().await?;
+            eprintln!(
+                "Downloading Codex {} from OpenAI (≈{} MB)…",
+                before.runtime.pinned_version,
+                before.runtime.download_bytes.div_ceil(1_000_000)
+            );
+            app.install_codex(
+                &format!("cli-{}", std::process::id()),
+                |event| match event {
+                    RuntimeEvent::Progress {
+                        downloaded_bytes,
+                        total_bytes,
+                    } if total_bytes > 0 => {
+                        eprint!("\r  {:>3}%", downloaded_bytes * 100 / total_bytes);
+                    }
+                    RuntimeEvent::Verifying => eprintln!("\r  checking it is OpenAI's…"),
+                    RuntimeEvent::Installing => eprintln!("  installing…"),
+                    _ => {}
+                },
+            )
+            .await?
+        }
+        CodexCommand::Remove => {
+            app.remove_codex()?;
+            app.codex_status().await?
+        }
+        CodexCommand::Login { device_code } => {
+            let method = if device_code {
+                CodexLoginMethod::DeviceCode
+            } else {
+                CodexLoginMethod::Browser
+            };
+            app.codex_login(method, |event| match event {
+                LoginEvent::BrowserOpened { url } => {
+                    eprintln!("Sign in to ChatGPT in your browser.");
+                    if let Some(url) = url {
+                        eprintln!("If it didn't open, go to: {url}");
+                    }
+                }
+                LoginEvent::DeviceCode {
+                    verification_url,
+                    user_code,
+                    ..
+                } => eprintln!("Go to {verification_url} and enter the code {user_code}"),
+                LoginEvent::Waiting => eprintln!("Waiting for you to finish signing in…"),
+                LoginEvent::Done => eprintln!("Signed in."),
+            })
+            .await?
+        }
+        CodexCommand::Logout => app.codex_logout().await?,
+        CodexCommand::Cap { runs } => {
+            if let Some(runs) = runs {
+                let cap = match runs.trim().to_ascii_lowercase().as_str() {
+                    "off" | "none" => None,
+                    other => Some(
+                        other
+                            .parse::<u32>()
+                            .map_err(|_| anyhow::anyhow!("expected a number of runs, or off"))?,
+                    ),
+                };
+                app.set_mode_a_weekly_cap(cap)?;
+            }
+            app.codex_status().await?
+        }
+        CodexCommand::Use { source } => {
+            app.set_codex_source(match source {
+                SourceArg::Managed => CodexSource::Managed,
+                SourceArg::System => CodexSource::System,
+            })
+            .await?
+        }
+    };
+    if json {
+        return print_json(&status);
+    }
+    print_codex_status(&status);
+    Ok(())
+}
+
+fn print_codex_status(status: &CodexStatus) {
+    if !status.chatgpt_plan_offered {
+        println!("The ChatGPT plan isn't available in this version of PageLamp.");
+    }
+    let runtime = &status.runtime;
+    let installed = match (runtime.state, &runtime.installed_version) {
+        (CodexRuntimeState::UnsupportedPlatform, _) => {
+            "not available for this computer".to_string()
+        }
+        (CodexRuntimeState::Installed, Some(version)) => format!(
+            "Codex {version} ({})",
+            match runtime.source {
+                CodexSource::Managed => "installed by PageLamp",
+                CodexSource::System => "your own",
+            }
+        ),
+        _ => format!("not installed (`{CLI_NAME} ai codex install`)"),
+    };
+    println!(
+        "Runtime: {installed}; PageLamp is tested with {}",
+        runtime.pinned_version
+    );
+    if runtime.untested_platform {
+        println!("  (Windows on Arm: runs, but untested)");
+    }
+    match status.outdated_action {
+        CodexOutdatedAction::InstallPin => {
+            println!("  PageLamp needs a newer Codex: run `{CLI_NAME} ai codex install`.")
+        }
+        CodexOutdatedAction::UpdatePagelamp => {
+            println!("  Update PageLamp to keep using your ChatGPT plan.")
+        }
+        CodexOutdatedAction::None => {}
+    }
+    println!(
+        "Sign-in: {}",
+        match status.login.state {
+            CodexLoginState::Chatgpt => "ChatGPT".to_string(),
+            CodexLoginState::ApiKey =>
+                "an API key or token: runs bill that, not your ChatGPT plan".to_string(),
+            CodexLoginState::SignedOut => format!("signed out (`{CLI_NAME} ai codex login`)"),
+        }
+    );
+    println!(
+        "This week: {} run(s){}",
+        status.runs_this_week,
+        status
+            .weekly_cap
+            .map(|cap| format!(" of {cap}"))
+            .unwrap_or_else(|| " (no cap)".into())
+    );
+    if let Some(system) = &status.system_codex {
+        println!(
+            "Your own Codex: {}{}",
+            system.version,
+            if system.in_tested_range {
+                format!(" (can be used: `{CLI_NAME} ai codex use system`)")
+            } else {
+                " (not a version PageLamp tested)".to_string()
+            }
+        );
+    }
+}
+
 fn status(app: &App, json: bool) -> anyhow::Result<()> {
     let status = app.ai_status()?;
     if json {
@@ -559,7 +747,12 @@ async fn use_model(
     let name = backend_name(&choice.backend).to_string();
     let status = app.ai_status()?;
     let Some(backend) = status.backends.iter().find(|b| b.backend == choice.backend) else {
-        // Unknown providers, Codex and Claude Code: the facade's error says why.
+        if choice.backend == BackendRef::Codex {
+            anyhow::bail!(
+                "set up the ChatGPT plan first: `{CLI_NAME} ai codex install`, then `{CLI_NAME} ai codex login`"
+            );
+        }
+        // Unknown providers and Claude Code: the facade's error says why.
         app.set_feature_model(feature, Some(choice))?;
         anyhow::bail!("'{name}' is not set up; see `{CLI_NAME} ai status`");
     };
@@ -578,7 +771,8 @@ async fn use_model(
         Some(info.price_known || (info.on_device && !info.runs_in_cloud))
     };
     let disclose = backend.disclosure_acknowledged != Some(backend.disclosure.version);
-    let unpriced = !on_device && price_known != Some(true);
+    // The ChatGPT plan has no price to accept (a weekly run cap instead).
+    let unpriced = !on_device && price_known != Some(true) && choice.backend != BackendRef::Codex;
     if disclose {
         eprintln!("{}\n", text::disclosure(&backend.disclosure));
     }

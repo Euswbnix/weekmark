@@ -23,6 +23,8 @@
 "ai.backend.problem.disclosure_changed" = "What this service receives has changed since you last read it.";
 "ai.backend.problem.key_missing" = "The key is missing from your keychain. Replace it to use this service again.";
 "ai.backend.problem.model_missing" = "A model you chose is no longer offered. Choose another below.";
+"ai.backend.problem.not_signed_in" = "Codex isn't signed in to ChatGPT. Sign in to use your plan.";
+"ai.backend.problem.runtime_missing" = "Codex isn't installed. Download it to use your ChatGPT plan.";
 "ai.backend.problem.server_not_running" = "The model server isn't running.";
 "ai.backend.remove" = "Remove";
 "ai.backend.removeBody" = "PageLamp deletes the key from your keychain and stops using %1$@ for every feature. Your usage history stays.";
@@ -58,6 +60,7 @@
 "ai.budget.used" = "%1$@ of %2$@ used this month";
 "ai.budget.usedNoBudget" = "%1$@ used this month";
 "ai.budget.warn" = "You've used %1$@%% of this month's budget.";
+"ai.codex.adminUnknown" = "If this is an Edu or workspace account, its administrators may be able to see what PageLamp sends through it.";
 "ai.codex.adminWarning" = "This is a school or company workspace: its administrators can see what PageLamp sends through it, including text from your course materials.";
 "ai.codex.apiKeyWarning" = "Codex is signed in with an API key, so runs are billed to that key, not to your ChatGPT plan. Sign out and sign in with ChatGPT to use your plan.";
 "ai.codex.cap.amount" = "Runs per week";
@@ -134,8 +137,9 @@
 "ai.codex.title" = "Use my ChatGPT plan (runs OpenAI Codex)";
 "ai.disclosure.accept" = "Turn on %1$@";
 "ai.disclosure.accepted" = "%1$@ is turned on";
-"ai.disclosure.admin.body" = "If your account belongs to a school or an employer, its administrators may be able to see what's sent.";
 "ai.disclosure.admin.heading" = "Who else can see it";
+"ai.disclosure.admin.unknown" = "If your ChatGPT account is an Edu or workspace account, its administrators may be able to see what PageLamp sends through it, including text from your course materials.";
+"ai.disclosure.admin.yes" = "Your account is a school or workspace account: its administrators can see what PageLamp sends through it, including text from your course materials.";
 "ai.disclosure.age.body" = "%1$@ requires you to be %2$@ or older.";
 "ai.disclosure.age.confirm" = "I meet %1$@'s age requirement.";
 "ai.disclosure.age.guardian" = "%1$@ requires you to be %2$@ or older, and under 18 you need a parent's or guardian's permission.";
@@ -260,7 +264,8 @@
 "ai.policy.training.may_train_free_tier" = "free tier: may be used for training";
 "ai.policy.training.no_training" = "not used for training";
 "ai.policy.training.unknown" = "training unknown: check the provider's terms";
-"ai.removeAll.body" = "This deletes your API keys from the keychain, your model choices, the usage history, the AI settings, and every plan and explanation PageLamp wrote, and signs PageLamp's Codex out of ChatGPT. Your courses, their rules and your answers about sharing materials stay.";
+"ai.removeAll.body" = "This deletes your API keys from the keychain, your model choices, the usage history, the AI settings, and everything PageLamp wrote with AI. Your courses, their rules and your answers about sharing materials stay.";
+"ai.removeAll.bodyCodex" = "This deletes your API keys from the keychain, your model choices, the usage history, the AI settings, and everything PageLamp wrote with AI, and signs PageLamp's Codex out of ChatGPT. Your courses, their rules and your answers about sharing materials stay.";
 "ai.removeAll.button" = "Remove all AI data";
 "ai.removeAll.confirm" = "Remove all";
 "ai.removeAll.done" = "All AI data removed";

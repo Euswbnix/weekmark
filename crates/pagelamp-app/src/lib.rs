@@ -456,6 +456,9 @@ pub(crate) struct AppState {
     extract_worker: std::sync::RwLock<Option<PathBuf>>,
     /// The stop request of the sync this app is running, if any (`cancel_sync`).
     sync_cancel: std::sync::Mutex<Option<pagelamp_core::source::CancelFlag>>,
+    /// Codex (mode A): installs and the sign-in in progress, the last sign-in state, one run at
+    /// a time.
+    pub(crate) codex: ai::codex::CodexState,
     /// Whether the data dir had been used when this app opened it (sources, or a
     /// pre-migration backup), for the launch classification (`updates`): read at open, since
     /// the first-run screens add a source before the shell asks for its startup tasks.
@@ -1171,7 +1174,7 @@ fn display_path(path: &Path) -> String {
 }
 
 /// Same directory, comparing canonical forms when they exist.
-fn same_dir(a: Option<&Path>, b: Option<&Path>) -> bool {
+pub(crate) fn same_dir(a: Option<&Path>, b: Option<&Path>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => {
             a == b
@@ -1270,6 +1273,21 @@ struct AppTypes {
     gen_notice_code: ai::GenNoticeCode,
     gen_event: ai::GenEvent,
     generation_meta: ai::GenerationMeta,
+    // ChatGPT plan through Codex (v0.3 M2)
+    admin_visibility: ai::AdminVisibility,
+    codex_status: ai::CodexStatus,
+    codex_runtime: ai::CodexRuntime,
+    codex_runtime_state: ai::CodexRuntimeState,
+    codex_source: ai::CodexSource,
+    codex_outdated_action: ai::CodexOutdatedAction,
+    codex_login: ai::CodexLogin,
+    codex_login_state: ai::CodexLoginState,
+    chat_gpt_plan_type: ai::ChatGptPlanType,
+    system_codex: ai::SystemCodex,
+    runtime_event: ai::RuntimeEvent,
+    codex_login_method: ai::CodexLoginMethod,
+    login_event: ai::LoginEvent,
+    mode_a_usage: ai::ModeAUsage,
     // Course (v0.3 M0.10)
     course_timeline: pagelamp_core::model::CourseTimeline,
     lifecycle_summary: LifecycleSummary,

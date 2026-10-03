@@ -109,6 +109,7 @@ impl App {
             rows,
             total_micro_usd,
             budget: budget_status(&store)?,
+            mode_a: self.mode_a_usage(&store)?,
         })
     }
 }

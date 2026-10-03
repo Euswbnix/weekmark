@@ -48,7 +48,7 @@ export function LocalServers({
           {t("local.detectFailed")} {errorText(servers.error)}
         </p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="divide-y border-y">
           {servers.data.map((server) => (
             <ServerRow
               key={server.kind}
@@ -105,7 +105,7 @@ function ServerRow({
   }
 
   return (
-    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border p-3">
+    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
       <div className="min-w-0 space-y-0.5">
         <p className="font-medium">{name}</p>
         <p className="text-sm text-muted-foreground">

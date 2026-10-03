@@ -24,6 +24,7 @@
 pub mod backend;
 pub mod catalog;
 mod client;
+pub mod codex;
 pub mod error;
 pub mod estimate;
 pub mod output;

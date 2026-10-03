@@ -345,3 +345,33 @@ fn a_not_allowed_course_is_blocked_for_a_cloud_model_from_the_cli() {
     ));
     ok(&pagelamp(&home, &estimate));
 }
+
+/// A build that doesn't offer the ChatGPT plan (`CHATGPT_PLAN_OFFERED`): `ai codex …` refuses
+/// with the facade's message before anything is printed or started (status and sign-out, which
+/// clean up, still work; they aren't run here because they would look for a `codex` on PATH).
+#[test]
+fn codex_commands_refuse_when_the_plan_is_not_offered() {
+    if pagelamp_app::ai::CHATGPT_PLAN_OFFERED {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    for args in [
+        &["ai", "codex", "install"][..],
+        &["ai", "codex", "login"],
+        &["ai", "codex", "use", "system"],
+        &["ai", "codex", "cap", "5"],
+    ] {
+        let output = pagelamp(&home, args);
+        let err = failed(&output);
+        assert!(
+            err.contains("The ChatGPT plan isn't available in this version of PageLamp"),
+            "{args:?}: {err}"
+        );
+        assert!(
+            stdout(&output).is_empty(),
+            "{args:?}: nothing printed first"
+        );
+        assert!(!err.contains("Downloading"), "{args:?}: {err}");
+    }
+}

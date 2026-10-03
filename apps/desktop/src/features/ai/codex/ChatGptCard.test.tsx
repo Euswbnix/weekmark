@@ -20,7 +20,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("Use my ChatGPT plan (Codex)", () => {
   it("says what the download is, installs it and offers to sign in", async () => {
-    const { user } = renderRoute("/settings");
+    const { user } = renderRoute("/settings", { scenario: "codex-not-installed" });
     const region = await card();
     expect(
       await within(region).findByText(/≈70–80 MB, taking up to ≈330 MB once installed/),
@@ -33,7 +33,7 @@ describe("Use my ChatGPT plan (Codex)", () => {
   });
 
   it("says when another window is installing Codex (not a sync)", async () => {
-    const api = createMockApi({ latencyMs: 0, syncStepMs: 0 });
+    const api = createMockApi({ latencyMs: 0, syncStepMs: 0, scenario: "codex-not-installed" });
     vi.spyOn(api, "installCodex").mockRejectedValue(new ApiError("busy", "Installing elsewhere."));
     const { user } = renderRoute("/settings", { api });
     const region = await card();
@@ -45,7 +45,7 @@ describe("Use my ChatGPT plan (Codex)", () => {
   });
 
   it("cancels a download without calling it a failure", async () => {
-    const api = createMockApi({ latencyMs: 0, syncStepMs: 40 });
+    const api = createMockApi({ latencyMs: 0, syncStepMs: 40, scenario: "codex-not-installed" });
     const { user } = renderRoute("/settings", { api });
     const region = await card();
     await user.click(await within(region).findByRole("button", { name: "Download Codex" }));
@@ -66,7 +66,7 @@ describe("Use my ChatGPT plan (Codex)", () => {
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
 
     const sheet = await screen.findByRole("dialog", {
-      name: "Before PageLamp uses ChatGPT plan (Codex)",
+      name: "Before PageLamp uses ChatGPT plan (through OpenAI Codex)",
     });
     expect(
       within(sheet).getByText(
@@ -80,9 +80,13 @@ describe("Use my ChatGPT plan (Codex)", () => {
       within(sheet).getByText(/Past your plan limit, runs may use your ChatGPT credits/),
     ).toBeInTheDocument();
     await user.click(within(sheet).getByLabelText("I meet OpenAI's age requirement."));
-    await user.click(within(sheet).getByRole("button", { name: "Turn on ChatGPT plan (Codex)" }));
+    await user.click(
+      within(sheet).getByRole("button", { name: "Turn on ChatGPT plan (through OpenAI Codex)" }),
+    );
     await waitFor(() => expect(region).toHaveFocus());
-    expect(await within(region).findByText("Signed in with ChatGPT · Plus")).toBeInTheDocument();
+    // The plan type isn't known after a sign-in yet (A7), so admin visibility is "unknown".
+    expect(await within(region).findByText("Signed in with ChatGPT")).toBeInTheDocument();
+    expect(within(region).getByText(/If this is an Edu or workspace account/)).toBeInTheDocument();
   });
 
   it("shows a device code to enter, and cancels the sign-in when closed", async () => {
@@ -122,6 +126,8 @@ describe("Use my ChatGPT plan (Codex)", () => {
     expect(
       await within(region).findByText(/runs are billed to that key, not to your ChatGPT plan/),
     ).toBeInTheDocument();
+    // The plan type is unknown: the admin warning says "may".
+    expect(within(region).getByText(/If this is an Edu or workspace account/)).toBeInTheDocument();
   });
 
   it("points a plan without codex exec to what still works (D10)", async () => {

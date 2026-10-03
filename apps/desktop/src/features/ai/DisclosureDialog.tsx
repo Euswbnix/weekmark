@@ -136,9 +136,9 @@ function DisclosureBody({ status, onDone }: { status: AiBackendStatus; onDone: (
               : t(`disclosure.retention.${facts.retention.kind}`, { name: who })}
           </p>
         </Item>
-        {facts.admin_visibility ? (
+        {facts.admin_visibility !== "no" ? (
           <Item heading={t("disclosure.admin.heading")}>
-            <p>{t("disclosure.admin.body")}</p>
+            <p>{t(`disclosure.admin.${facts.admin_visibility}`)}</p>
           </Item>
         ) : null}
         <Item heading={t("disclosure.cost.heading")}>

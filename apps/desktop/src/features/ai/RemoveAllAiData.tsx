@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { useRemoveAllAiData } from "@/api/ai-queries";
+import { useCodexStatus, useRemoveAllAiData } from "@/api/ai-queries";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,11 +15,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAiErrorText } from "./useAiErrorText";
 
-/** "Remove all AI data" (design §8 "Your controls"): keys, choices, ledger, generated content. */
+/**
+ * "Remove all AI data" (design §8 "Your controls"): keys, choices, ledger, generated content.
+ * The dialog names the ChatGPT sign-out only when there is one to undo: while the ChatGPT plan
+ * isn't offered, no copy mentions it.
+ */
 export function RemoveAllAiData() {
   const { t } = useTranslation("ai");
   const { t: tc } = useTranslation();
   const remove = useRemoveAllAiData();
+  const codex = useCodexStatus();
+  const signedInToChatGpt = codex.data !== undefined && codex.data.login.state !== "signed_out";
   const errorText = useAiErrorText();
   const [open, setOpen] = useState(false);
 
@@ -43,7 +49,9 @@ export function RemoveAllAiData() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("removeAll.title")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("removeAll.body")}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {signedInToChatGpt ? t("removeAll.bodyCodex") : t("removeAll.body")}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           {remove.error ? (
             <p role="alert" className="text-sm text-destructive">

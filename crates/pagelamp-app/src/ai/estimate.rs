@@ -14,7 +14,7 @@ use pagelamp_llm::OutputSpec;
 use pagelamp_llm::profile::ProviderProfile;
 
 use super::settings::{self, backend_key};
-use super::{CostEstimate, EstimateRequest, prompts};
+use super::{BackendRef, CostEstimate, EstimateRequest, prompts};
 use crate::{App, AppError, AppErrorKind, Result};
 
 /// Characters of material text an explanation may carry (design §4.2 starting value).
@@ -44,9 +44,17 @@ impl App {
         let Some(choice) = routing.0.get(&feature).cloned() else {
             return Ok(blocked_estimate(BlockReason::NoModelChosen));
         };
-        // No key needed: an estimate never reads the keychain.
-        let profile = self.provider_profile(&choice.backend)?;
-        let destination = if profile.on_device() {
+        // The ChatGPT plan through Codex runs in OpenAI's cloud; its tokens are counted like
+        // OpenAI's Responses wire. No key needed: an estimate never reads the keychain.
+        let codex = choice.backend == BackendRef::Codex;
+        let profile = if codex {
+            pagelamp_llm::profile::preset("openai")
+                .expect("the openai preset")
+                .clone()
+        } else {
+            self.provider_profile(&choice.backend)?
+        };
+        let destination = if !codex && profile.on_device() {
             Destination::OnDevice
         } else {
             Destination::Cloud
@@ -89,6 +97,18 @@ impl App {
             choice.effort,
             max_output,
         );
+        if codex {
+            // Runs count against the plan: no price and no money budget, a weekly run cap.
+            return Ok(CostEstimate {
+                micro_usd_upper: None,
+                input_tokens: estimate.input_tokens,
+                max_output_tokens: estimate.max_output_tokens,
+                reasoning_allowance: estimate.reasoning_allowance,
+                repair_possible: estimate.repair_possible,
+                price_known: false,
+                would_block: self.codex_blocks(&store)?,
+            });
+        }
         let would_block = self.other_blocks(
             &store,
             &choice.backend,
@@ -106,6 +126,25 @@ impl App {
             price_known: estimate.price_known,
             would_block,
         })
+    }
+
+    /// The ChatGPT plan: the disclosure, then the weekly run cap.
+    fn codex_blocks(&self, store: &Store) -> Result<Option<BlockReason>> {
+        // A Codex routing stored by an earlier build blocks here instead of running.
+        if !self.chatgpt_plan_offered() {
+            return Ok(Some(BlockReason::BackendDisabledInThisBuild));
+        }
+        let version = self.disclosure(&BackendRef::Codex)?.version;
+        let acknowledged = settings::disclosures(store)?
+            .get(&backend_key(&BackendRef::Codex))
+            .is_some_and(|ack| ack.version == version);
+        if !acknowledged {
+            return Ok(Some(BlockReason::DisclosureNotAcknowledged));
+        }
+        if self.codex_cap_reached(store)? {
+            return Ok(Some(BlockReason::WeeklyRunCapReached));
+        }
+        Ok(None)
     }
 
     /// The disclosure, an unpriced model and the budget, in that order.

@@ -1,7 +1,7 @@
 import { Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { CodexStatus } from "@/api/provisional/codex";
+import type { CodexStatus } from "@/api/ai";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { InstallUpdateDialog } from "@/features/updates/InstallUpdateDialog";
@@ -31,7 +31,7 @@ function InstallPin() {
     if (useCodexStore.getState().install.phase === "idle") void start();
   }, [start]);
   return (
-    <div className="space-y-2 rounded-lg border bg-muted/40 p-3 text-sm">
+    <div className="space-y-2 rounded-row bg-muted p-3 text-sm">
       <p className="flex items-center gap-2 font-medium">
         <Info className="size-4 shrink-0" aria-hidden />
         {t("codex.outdated.installPin")}
@@ -54,7 +54,7 @@ function UpdatePageLamp() {
   const available = useUpdateStore((s) => s.available);
   const [open, setOpen] = useState(false);
   return (
-    <div className="space-y-2 rounded-lg border bg-muted/40 p-3 text-sm">
+    <div className="space-y-2 rounded-row bg-muted p-3 text-sm">
       <p className="flex items-center gap-2 font-medium">
         <Info className="size-4 shrink-0" aria-hidden />
         {t("codex.outdated.updateApp")}

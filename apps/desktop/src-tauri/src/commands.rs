@@ -11,8 +11,10 @@ use std::path::PathBuf;
 
 use chrono::NaiveDate;
 use pagelamp_app::ai::{
-    AiStatus, BackendRef, CostEstimate, EstimateRequest, GenEvent, LocalServer, ModelChoice,
-    ModelInfo, ModelProviderRecord, ProbeReport, ProviderPreset, RemoveAiDataReport, UsageSummary,
+    AiStatus, BackendRef, CodexLoginMethod, CodexSource, CodexStatus, CostEstimate,
+    EstimateRequest, GenEvent, LocalServer, LoginEvent, ModelChoice, ModelInfo,
+    ModelProviderRecord, ProbeReport, ProviderPreset, RemoveAiDataReport, RuntimeEvent,
+    UsageSummary,
 };
 use pagelamp_app::diagnostics::{self, CrashReport, DoctorReport};
 use pagelamp_app::{
@@ -719,6 +721,109 @@ pub async fn usage_summary(
 #[tauri::command]
 pub async fn remove_all_ai_data(backend: State<'_, Backend>) -> CmdResult<RemoveAiDataReport> {
     backend.blocking(|app| app.remove_all_ai_data()).await
+}
+
+// ----- mode A: the ChatGPT plan through official Codex (v0.3 M2; design §2.3) --------------------
+// Codex signs in and runs itself; PageLamp never sees credentials. Install and sign-in progress
+// streams through a Channel, like sync events.
+
+#[tauri::command]
+pub async fn codex_status(backend: State<'_, Backend>) -> CmdResult<CodexStatus> {
+    backend
+        .spawn(|app| async move { app.codex_status().await })
+        .await
+}
+
+/// Downloads, verifies and installs the pinned Codex. `install_id` is made by the UI, so
+/// `cancel_codex_install` can stop it before this returns.
+#[tauri::command]
+pub async fn install_codex(
+    backend: State<'_, Backend>,
+    install_id: String,
+    on_event: Channel<RuntimeEvent>,
+) -> CmdResult<CodexStatus> {
+    backend
+        .spawn(|app| async move {
+            app.install_codex(&install_id, move |event| {
+                // The window may have gone away; the install carries on regardless.
+                let _ = on_event.send(event);
+            })
+            .await
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn cancel_codex_install(
+    backend: State<'_, Backend>,
+    install_id: String,
+) -> CmdResult<()> {
+    backend
+        .blocking(move |app| {
+            app.cancel_codex_install(&install_id);
+            Ok(())
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn remove_codex(backend: State<'_, Backend>) -> CmdResult<()> {
+    backend.blocking(|app| app.remove_codex()).await
+}
+
+#[tauri::command]
+pub async fn codex_login(
+    backend: State<'_, Backend>,
+    method: CodexLoginMethod,
+    on_event: Channel<LoginEvent>,
+) -> CmdResult<CodexStatus> {
+    backend
+        .spawn(|app| async move {
+            app.codex_login(method, move |event| {
+                let _ = on_event.send(event);
+            })
+            .await
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn cancel_codex_login(backend: State<'_, Backend>) -> CmdResult<()> {
+    backend
+        .blocking(|app| {
+            app.cancel_codex_login();
+            Ok(())
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn codex_logout(backend: State<'_, Backend>) -> CmdResult<CodexStatus> {
+    backend
+        .spawn(|app| async move { app.codex_logout().await })
+        .await
+}
+
+/// PageLamp's ChatGPT-plan runs per week (Monday to Sunday, local time); `None` = no cap.
+#[tauri::command]
+pub async fn set_mode_a_weekly_cap(
+    backend: State<'_, Backend>,
+    runs: Option<u32>,
+) -> CmdResult<()> {
+    backend
+        .blocking(move |app| app.set_mode_a_weekly_cap(runs))
+        .await
+}
+
+/// PageLamp's own Codex, or an installed one in the tested range (D12).
+#[tauri::command]
+pub async fn set_codex_source(
+    backend: State<'_, Backend>,
+    source: CodexSource,
+) -> CmdResult<CodexStatus> {
+    backend
+        .spawn(move |app| async move { app.set_codex_source(source).await })
+        .await
 }
 
 // ----- "connect your AI app" ---------------------------------------------------------------------

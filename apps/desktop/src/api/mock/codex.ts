@@ -6,10 +6,17 @@
 // PROVISIONAL until the owner's A7 tests (by 2026-10-18): what `codex login status` says about the
 // plan type, whether `codex exec` works on Free/Go (exec_available), and the credits wording.
 
-import type { AiBackendStatus, DisclosureFacts, ModelInfo, UsageRow } from "../ai";
+import type {
+  AiBackendStatus,
+  ChatGptPlanType,
+  CodexStatus,
+  DisclosureFacts,
+  ModeAUsage,
+  ModelInfo,
+  UsageRow,
+} from "../ai";
 import type { PageLampApi } from "../client";
 import { ApiError } from "../errors";
-import type { ChatGptPlanType, CodexStatus, ModeAUsage } from "../provisional/codex";
 import type { MockScenario } from "./fixtures";
 
 type CodexApi = Pick<
@@ -32,7 +39,7 @@ export const MOCK_CODEX_DOWNLOAD_BYTES = 71_300_000;
 /** The proposed default weekly cap (design §2.3). */
 export const DEFAULT_WEEKLY_CAP = 40;
 export const MOCK_DEVICE_CODE = "PLMP-4821";
-export const CODEX_LABEL = "ChatGPT plan (Codex)";
+export const CODEX_LABEL = "ChatGPT plan (through OpenAI Codex)";
 
 /** The pin's supported models (codex-pin.toml): explicit `-m` from this list on every run. */
 export const MOCK_CODEX_MODELS: ModelInfo[] = [
@@ -71,7 +78,12 @@ export function codexFacts(plan: ChatGptPlanType): DisclosureFacts {
           how_to_turn_off_url: "https://chatgpt.demo.test/settings/data-controls",
         },
     retention: { kind: "provider_terms" },
-    admin_visibility: plan === "edu" || plan === "enterprise",
+    admin_visibility:
+      plan === "edu" || plan === "enterprise" || plan === "business"
+        ? "yes"
+        : plan === "unknown"
+          ? "unknown"
+          : "no",
     min_age: 13,
     guardian_permission: true,
     cost: "plan_credits",
@@ -133,16 +145,39 @@ function scenarioState(scenario: MockScenario): Scenario {
   }
 }
 
+/**
+ * Whether the mock offers the ChatGPT plan: only in the `codex-*` scenarios, which exist to show
+ * its screens. Everywhere else it's off, as in every build until OpenAI confirms in writing (the
+ * facade's CHATGPT_PLAN_OFFERED): no card, no ChatGPT copy, and every way into Codex refuses.
+ */
+export function chatgptPlanOfferedIn(scenario: MockScenario): boolean {
+  return scenario.startsWith("codex-");
+}
+
+/** The facade's refusal while the ChatGPT plan isn't offered. */
+export function chatgptPlanNotOffered(): ApiError {
+  return new ApiError(
+    "blocked",
+    "The ChatGPT plan isn't available in this version of PageLamp. Use an API key or a model on this computer.",
+    { blocked: "backend_disabled_in_this_build" },
+  );
+}
+
 export interface MockCodex {
   api: CodexApi;
-  /** The `codex` entry of ai_status, once the runtime is installed. */
-  backendStatus: (acknowledged: number | null) => AiBackendStatus | null;
+  /** This build offers the ChatGPT plan (`chatgptPlanOfferedIn`). */
+  offered: boolean;
+  /** Throws the facade's refusal unless the plan is offered. */
+  requireOffered: () => void;
+  /** The `codex` entry of ai_status, once Codex is installed or chosen for a feature. */
+  backendStatus: (acknowledged: number | null, chosen: boolean) => AiBackendStatus | null;
   /** Whether the scenario starts with the disclosure acknowledged. */
   initiallyAcknowledged: boolean;
   models: () => ModelInfo[];
   /** For the estimate: would a run be refused by the weekly cap? */
   capReached: () => boolean;
-  modeA: () => ModeAUsage | null;
+  /** Null until Codex is installed or chosen for a feature, like the facade. */
+  modeA: (chosen: boolean) => ModeAUsage | null;
   usageRows: () => [number, UsageRow][];
   signedIn: () => boolean;
   /** "Remove all AI data" runs `codex logout` first. */
@@ -156,6 +191,10 @@ export function createMockCodex(options: {
 }): MockCodex {
   const { delay, stepMs } = options;
   const start = scenarioState(options.scenario);
+  const offered = chatgptPlanOfferedIn(options.scenario);
+  const requireOffered = () => {
+    if (!offered) throw chatgptPlanNotOffered();
+  };
   const state = {
     installed: start.installed,
     source: "managed" as CodexStatus["runtime"]["source"],
@@ -172,6 +211,8 @@ export function createMockCodex(options: {
 
   function status(): CodexStatus {
     return structuredClone({
+      // As `aiStatus` (mock/ai.ts). The rest still answers, for clean-up.
+      chatgpt_plan_offered: offered,
       runtime: {
         state: state.installed ? "installed" : "not_installed",
         source: state.source,
@@ -203,6 +244,7 @@ export function createMockCodex(options: {
 
     installCodex: async (installId, onEvent) => {
       await delay();
+      requireOffered();
       const total = MOCK_CODEX_DOWNLOAD_BYTES;
       const check = () => {
         if (cancelledInstalls.has(installId)) {
@@ -247,6 +289,7 @@ export function createMockCodex(options: {
 
     codexLogin: async (method, onEvent) => {
       await delay();
+      requireOffered();
       requireInstalled();
       loginCancelled = false;
       if (method === "device_code") {
@@ -264,7 +307,9 @@ export function createMockCodex(options: {
         await sleep(stepMs);
         if (loginCancelled) throw new ApiError("cancelled", "Sign-in cancelled.");
       }
-      state.login = { state: "chatgpt", plan_type: start.login.plan_type ?? "plus" };
+      // Like the facade: `codex login status` doesn't say the plan type yet (until A7), so a
+      // fresh sign-in reports "unknown". Scenarios with a plan type preview what A7 may allow.
+      state.login = { state: "chatgpt", plan_type: start.login.plan_type ?? "unknown" };
       onEvent({ type: "done" });
       return status();
     },
@@ -281,6 +326,7 @@ export function createMockCodex(options: {
 
     setCodexSource: async (source) => {
       await delay();
+      requireOffered();
       if (source === "system") {
         throw new ApiError(
           "invalid",
@@ -288,10 +334,12 @@ export function createMockCodex(options: {
         );
       }
       state.source = source;
+      return status();
     },
 
     setModeAWeeklyCap: async (runs) => {
       await delay();
+      requireOffered();
       if (runs !== null && (!Number.isInteger(runs) || runs < 1)) {
         throw new ApiError("invalid", "The weekly cap must be a whole number of runs, at least 1.");
       }
@@ -301,31 +349,39 @@ export function createMockCodex(options: {
 
   return {
     api,
+    offered,
+    requireOffered,
     initiallyAcknowledged: start.acknowledged,
-    backendStatus: (acknowledged) => {
-      if (!state.installed) return null;
+    backendStatus: (acknowledged, chosen) => {
+      // Not offered: no Codex backend at all, like the facade.
+      if (!offered || (!state.installed && !chosen)) return null;
       const disclosure = codexFacts(state.login.plan_type ?? "unknown");
-      const signedIn = state.login.state !== "signed_out";
-      const changed = acknowledged !== null && acknowledged !== disclosure.version;
+      const problems: AiBackendStatus["problems"] = [];
+      if (!state.installed) problems.push("runtime_missing");
+      else if (state.login.state === "signed_out") problems.push("not_signed_in");
+      if (acknowledged !== null && acknowledged !== disclosure.version) {
+        problems.push("disclosure_changed");
+      }
+      const setUp =
+        state.installed && state.login.state !== "signed_out" && state.execAvailable !== false;
       return {
         backend: { kind: "codex" },
         label: CODEX_LABEL,
         kind: "codex",
-        state:
-          !signedIn || state.execAvailable === false
-            ? "needs_setup"
-            : acknowledged !== disclosure.version
-              ? "needs_disclosure"
-              : "ready",
-        problems: changed ? ["disclosure_changed"] : [],
-        provider: null,
+        state: !setUp
+          ? "needs_setup"
+          : acknowledged !== disclosure.version
+            ? "needs_disclosure"
+            : "ready",
+        problems,
         disclosure,
         disclosure_acknowledged: acknowledged,
       };
     },
     models: () => structuredClone(MOCK_CODEX_MODELS),
     capReached: () => state.cap !== null && state.runs >= state.cap,
-    modeA: () => (state.installed ? { runs_this_week: state.runs, weekly_cap: state.cap } : null),
+    modeA: (chosen) =>
+      state.installed || chosen ? { runs_this_week: state.runs, weekly_cap: state.cap } : null,
     usageRows: () =>
       start.runs > 0 && start.login.state !== "signed_out"
         ? [

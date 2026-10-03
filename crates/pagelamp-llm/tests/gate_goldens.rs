@@ -143,3 +143,77 @@ fn no_wire_ever_sends_text_of_a_course_that_is_not_readable() {
         assert!(body.contains("DEMO303 Demo Studies"), "{wire}");
     }
 }
+
+/// The same for the ChatGPT plan (M2 DoD 1): what `codex exec` gets on stdin (the only place the
+/// prompt goes), through the test-only fake Codex that records its stdin.
+#[tokio::test]
+async fn codex_stdin_never_carries_text_of_a_course_that_is_not_readable() {
+    use pagelamp_llm::CancellationToken;
+    use pagelamp_llm::codex::{CodexHome, Exec, ExecRequest};
+
+    let temp = tempfile::tempdir().unwrap();
+    let home = CodexHome::new(temp.path().join("codex-home"));
+    std::fs::create_dir_all(home.dir()).unwrap();
+    let answer = serde_json::json!({"type": "item.completed", "item": {"id": "m1", "type": "agent_message", "text": "ok"}});
+    std::fs::write(
+        home.dir().join("fake-codex.json"),
+        serde_json::json!({ "exec": { "stdout": [answer.to_string()] } }).to_string(),
+    )
+    .unwrap();
+    let exec = Exec {
+        binary: env!("CARGO_BIN_EXE_fake-codex").into(),
+        home,
+        runs_dir: temp.path().join("ai-runs"),
+    };
+    let store = store();
+    let at = AsOf::now_local();
+    let week = week_context(
+        &store,
+        "DEMO101",
+        Some(3),
+        at,
+        Destination::Cloud,
+        ContextBudget { max_chars: 100_000 },
+    )
+    .unwrap();
+    let plan = plan_context(&store, &PlanScope::default(), at).unwrap();
+    for (run, prompt) in [
+        ("week", assemble("Explain the week.", &week, None)),
+        ("plan", assemble("Plan.", &plan, None)),
+    ] {
+        let request = ExecRequest {
+            prompt: &prompt,
+            model: "gpt-6-luna",
+            effort: Effort::Lowest,
+            output_schema: None,
+            run_id: run,
+        };
+        exec.run_with_fallback(&request, None, &CancellationToken::new())
+            .await
+            .unwrap();
+    }
+    let observed =
+        std::fs::read_to_string(exec.home.dir().join("fake-codex-observed.jsonl")).unwrap();
+    let stdins: Vec<String> = observed
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).unwrap()["stdin"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(stdins.len(), 2);
+    assert!(stdins[0].contains("readablecanary"), "{}", stdins[0]);
+    assert!(
+        !stdins[1].contains("readablecanary"),
+        "structure only: {}",
+        stdins[1]
+    );
+    for stdin in &stdins {
+        assert!(
+            !stdin.contains("withheldcanary") && !stdin.contains("turnedoffcanary"),
+            "{stdin}"
+        );
+    }
+}

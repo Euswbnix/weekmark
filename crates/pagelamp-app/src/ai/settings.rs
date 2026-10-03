@@ -19,9 +19,23 @@ pub(crate) const BUDGET: &str = "ai.budget";
 pub(crate) const DISCLOSURES: &str = "ai.disclosures";
 /// Models without a known price the student accepted, by backend key.
 pub(crate) const UNPRICED: &str = "ai.unpriced_acknowledged";
+/// Which Codex runs (`CodexSource`; absent: managed).
+pub(crate) const CODEX_SOURCE: &str = "ai.codex_source";
+/// Mode A's weekly run cap (`WeeklyCap`; absent: the default).
+pub(crate) const MODE_A_WEEKLY_CAP: &str = "ai.mode_a_weekly_cap";
+/// The last "requires a newer version of Codex" seen, and with which version.
+pub(crate) const CODEX_OUTDATED: &str = "ai.codex_outdated";
 
 /// Every AI settings key ("Remove all AI data" deletes them).
-pub(crate) const ALL_KEYS: [&str; 4] = [ROUTING, BUDGET, DISCLOSURES, UNPRICED];
+pub(crate) const ALL_KEYS: [&str; 7] = [
+    ROUTING,
+    BUDGET,
+    DISCLOSURES,
+    UNPRICED,
+    CODEX_SOURCE,
+    MODE_A_WEEKLY_CAP,
+    CODEX_OUTDATED,
+];
 
 /// A stable key for a backend in settings maps.
 pub(crate) fn backend_key(backend: &BackendRef) -> String {
@@ -44,6 +58,19 @@ pub(crate) struct BudgetSetting {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Acknowledgement {
     pub version: u32,
+    pub at: Timestamp,
+}
+
+/// Absent: the default cap; `runs: None`: no cap.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub(crate) struct WeeklyCap {
+    pub runs: Option<u32>,
+}
+
+/// A `runtime_outdated` error, and the Codex version that gave it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct OutdatedSeen {
+    pub version: String,
     pub at: Timestamp,
 }
 

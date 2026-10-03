@@ -13,7 +13,7 @@ function facts(
 ): DisclosureFacts {
   return {
     sends: [...CLOUD],
-    admin_visibility: false,
+    admin_visibility: "no",
     guardian_permission: false,
     ...partial,
   };

@@ -278,3 +278,31 @@ jobs:
         run: node --test .github/scripts/*.test.mjs
       - name: Check the release configuration
         run: node .github/scripts/release-config.mjs
+
+  # The pinned, unmodified Codex runs with the config.toml PageLamp writes (v0.3 plan M2, leader):
+  # size + SHA-256 of the pinned asset, --strict-config, no MCP servers, every feature PageLamp
+  # sets has that state in Codex's own view. No sign-in and no model call. Linux x64 only.
+  codex-contract:
+    name: Codex contract (Linux x64)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    # (No job-level env: the runner context isn't available there; the script uses $RUNNER_TEMP.)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch as of 2026-09-27
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: PageLamp's Codex config
+        run: .github/scripts/codex-contract.sh config
+      - name: The pinned Codex (size, SHA-256, version)
+        run: .github/scripts/codex-contract.sh download
+      - name: Codex accepts the config strictly, with no MCP servers and PageLamp's feature states
+        run: .github/scripts/codex-contract.sh check
+      # Informational until A7 item 8 settles whether the read-only sandbox needs bwrap here.
+      - name: The read-only sandbox with the bare binary (informational)
+        continue-on-error: true
+        run: .github/scripts/codex-contract.sh sandbox

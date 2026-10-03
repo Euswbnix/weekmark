@@ -22,6 +22,8 @@ pub enum ActivityKind {
     Sync,
     /// `download_course_files`.
     Download,
+    /// `install_codex`: downloading and verifying the Codex runtime.
+    CodexInstall,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -78,8 +80,10 @@ impl App {
             .values()
             .cloned()
             .collect();
-        // Syncs and downloads both hold sync.lock.
-        let syncing_here = !items.is_empty();
+        // Syncs and downloads both hold sync.lock (a Codex install doesn't).
+        let syncing_here = items
+            .iter()
+            .any(|item| matches!(item.kind, ActivityKind::Sync | ActivityKind::Download));
         let locked = lock::is_locked(&paths::sync_lock_path_in(self.data_dir()));
         Activity {
             other_process_syncing: locked && !syncing_here,

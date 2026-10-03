@@ -48,7 +48,7 @@ export function BackendRow({
     <li
       tabIndex={-1}
       data-backend={backendKey(status.backend)}
-      className="space-y-2 rounded-lg border p-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring"
+      className="space-y-2 py-4 outline-hidden focus-visible:rounded-row focus-visible:ring-3 focus-visible:ring-ring"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <h3 id={headingId} className="font-medium">

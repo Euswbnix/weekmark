@@ -28,14 +28,19 @@ const APP_ORIGIN: &str = if cfg!(windows) {
 };
 
 /// Commands with real side effects on the machine running the tests.
-/// (The updater ones would reach the network, install would restart the app, and the local
-/// server check connects to ports on this computer.)
+/// (The updater ones would reach the network, install would restart the app, the local server
+/// check connects to ports on this computer, and the Codex ones download it or start `codex`,
+/// including one the student may have installed.)
 const SKIPPED: &[&str] = &[
     "reveal_data_dir",
     "reveal_logs_dir",
     "updates_check",
     "updates_install",
     "detect_local_servers",
+    "codex_status",
+    "install_codex",
+    "codex_login",
+    "codex_logout",
 ];
 
 /// The removal commands' Trash here: moves nothing, so a changed fixture can never reach this

@@ -67,6 +67,10 @@ pub enum BackendProblem {
     ModelMissing,
     /// The disclosure facts changed since they were acknowledged.
     DisclosureChanged,
+    /// ChatGPT plan (Codex): not signed in, or signed in with something other than ChatGPT.
+    NotSignedIn,
+    /// ChatGPT plan (Codex): the runtime isn't installed.
+    RuntimeMissing,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -84,6 +88,9 @@ pub struct AiBackendStatus {
 /// Everything the AI settings page shows (no network call).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AiStatus {
+    /// This build offers the ChatGPT plan (`CHATGPT_PLAN_OFFERED`). False: no Codex backend is
+    /// listed, and the UIs hide the ChatGPT card and every ChatGPT copy.
+    pub chatgpt_plan_offered: bool,
     /// In priority order.
     pub backends: Vec<AiBackendStatus>,
     pub providers: Vec<ModelProviderRecord>,
@@ -113,8 +120,9 @@ pub struct DisclosureFacts {
     pub recipient: Recipient,
     pub training: TrainingFact,
     pub retention: RetentionFact,
-    /// A school or company administrator can see the use (Edu/Enterprise plans).
-    pub admin_visibility: bool,
+    /// Whether a school or company administrator can see what is sent (Edu, Enterprise and
+    /// Business workspaces). `unknown` while the plan type isn't known: never understated.
+    pub admin_visibility: AdminVisibility,
     pub min_age: Option<u8>,
     /// Under 18 needs a parent's or guardian's permission.
     pub guardian_permission: bool,
@@ -122,6 +130,17 @@ pub struct DisclosureFacts {
     pub on_device: bool,
     /// Where data is processed (ISO country code), if known.
     pub location: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AdminVisibility {
+    /// No administrator sees it (a personal plan, an API key, this computer).
+    No,
+    /// Not known (e.g. the ChatGPT plan type): the UIs show the conditional warning.
+    Unknown,
+    /// A school or workspace administrator can see it.
+    Yes,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -380,6 +399,16 @@ pub struct UsageSummary {
     /// The priced rows' total (what the budget counts).
     pub total_micro_usd: u64,
     pub budget: BudgetStatus,
+    /// The ChatGPT plan's runs this week and its cap, once the plan is set up or chosen.
+    pub mode_a: Option<ModeAUsage>,
+}
+
+/// Mode A has no money budget: a weekly run cap instead (design §2.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModeAUsage {
+    pub runs_this_week: u32,
+    /// `None`: no cap.
+    pub weekly_cap: Option<u32>,
 }
 
 /// What "Remove all AI data" removed.
@@ -458,4 +487,148 @@ pub struct GenerationMeta {
     pub estimated: bool,
     pub context: ContextSummary,
     pub prompt_version: u32,
+}
+
+// ----- mode A: the ChatGPT plan through official Codex (M2; design §2.3, §3.8) ----------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexRuntimeState {
+    NotInstalled,
+    Installed,
+    /// Codex isn't offered for this computer's OS and CPU.
+    UnsupportedPlatform,
+}
+
+/// Which Codex PageLamp runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexSource {
+    /// The pinned version PageLamp downloads and verifies (default).
+    #[default]
+    Managed,
+    /// A Codex the student installed themselves, in PageLamp's tested range (D12).
+    System,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CodexRuntime {
+    pub state: CodexRuntimeState,
+    pub source: CodexSource,
+    /// The version that runs (the managed one, or the system one when chosen).
+    pub installed_version: Option<String>,
+    pub pinned_version: String,
+    /// The compressed download (for "≈70–80 MB").
+    pub download_bytes: u64,
+    /// Windows on Arm: runs, but untested (D14).
+    pub untested_platform: bool,
+}
+
+/// What a `runtime_outdated` error means right now (the facade decides).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexOutdatedAction {
+    None,
+    /// The installed runtime is older than the pin: install the pin ("updating…").
+    InstallPin,
+    /// The pin itself is too old: update PageLamp.
+    UpdatePagelamp,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexLoginState {
+    SignedOut,
+    /// Runs use the student's ChatGPT plan.
+    Chatgpt,
+    /// Signed in with an API key (or another non-plan method): runs bill that, not the plan.
+    ApiKey,
+}
+
+/// The ChatGPT plan, when known (`codex login status` doesn't say; `unknown` until it can be
+/// told).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatGptPlanType {
+    Free,
+    Go,
+    Plus,
+    Pro,
+    Business,
+    Edu,
+    Enterprise,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CodexLogin {
+    pub state: CodexLoginState,
+    pub plan_type: Option<ChatGptPlanType>,
+}
+
+/// A `codex` found on this computer (D12).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SystemCodex {
+    pub version: String,
+    pub in_tested_range: bool,
+}
+
+/// The ChatGPT-plan card.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CodexStatus {
+    /// This build offers the ChatGPT plan (`CHATGPT_PLAN_OFFERED`). False: hide the ChatGPT card
+    /// and every ChatGPT copy; the rest of this status is only for clean-up.
+    pub chatgpt_plan_offered: bool,
+    pub runtime: CodexRuntime,
+    pub outdated_action: CodexOutdatedAction,
+    pub login: CodexLogin,
+    /// False when `codex exec` doesn't work on this plan (Free/Go, D10); `None` until known.
+    pub exec_available: Option<bool>,
+    /// Mode A's weekly run cap (`None`: no cap).
+    pub weekly_cap: Option<u32>,
+    pub runs_this_week: u32,
+    pub system_codex: Option<SystemCodex>,
+}
+
+/// `install_codex` progress. A failure or cancel ends the call with an error.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RuntimeEvent {
+    DownloadStarted {
+        total_bytes: u64,
+    },
+    Progress {
+        downloaded_bytes: u64,
+        total_bytes: u64,
+    },
+    Verifying,
+    Installing,
+    Done {
+        version: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexLoginMethod {
+    Browser,
+    DeviceCode,
+}
+
+/// `codex_login` progress.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LoginEvent {
+    /// Codex opened the browser; `url` is the same link, for when it didn't.
+    BrowserOpened {
+        url: Option<String>,
+    },
+    DeviceCode {
+        verification_url: String,
+        user_code: String,
+        expires_in_secs: Option<u32>,
+    },
+    /// Waiting for the student to finish in the browser.
+    Waiting,
+    Done,
 }

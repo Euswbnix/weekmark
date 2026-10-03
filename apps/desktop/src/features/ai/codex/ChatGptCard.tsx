@@ -3,14 +3,13 @@ import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { toast } from "sonner";
-import type { AiBackendStatus } from "@/api/ai";
+import type { AiBackendStatus, CodexStatus } from "@/api/ai";
 import {
   useCodexLogout,
   useCodexStatus,
   useRemoveCodex,
   useSetCodexSource,
 } from "@/api/ai-queries";
-import type { CodexStatus } from "@/api/provisional/codex";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,7 +55,7 @@ export function ChatGptCard({
       // Focusable from code only: after signing in and turning it on, focus lands here.
       tabIndex={-1}
       data-backend="codex"
-      className="space-y-3 rounded-lg border p-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring"
+      className="space-y-3 border-b pb-5 outline-hidden focus-visible:rounded-row focus-visible:ring-3 focus-visible:ring-ring"
     >
       <div className="space-y-1">
         <h3 id={headingId} className="font-medium">
@@ -125,8 +124,10 @@ function CardBody({
           {plan ? t("codex.signedInPlan", { plan: t(`codex.plan.${plan}`) }) : t("codex.signedIn")}
         </p>
       ) : null}
-      {login.state === "chatgpt" && (plan === "edu" || plan === "enterprise") ? (
+      {backend?.disclosure.admin_visibility === "yes" ? (
         <Warning>{t("codex.adminWarning")}</Warning>
+      ) : backend?.disclosure.admin_visibility === "unknown" ? (
+        <Warning>{t("codex.adminUnknown")}</Warning>
       ) : null}
       {login.state === "api_key" ? <Warning>{t("codex.apiKeyWarning")}</Warning> : null}
       {login.state === "chatgpt" && status.exec_available === false ? (
@@ -165,7 +166,7 @@ function CardBody({
 
       <SystemCodex status={status} />
 
-      <div className="flex flex-wrap gap-2 border-t pt-3">
+      <div className="flex flex-wrap gap-2 pt-1">
         {signedIn ? <SignOutButton /> : null}
         <RemoveCodexButton />
       </div>

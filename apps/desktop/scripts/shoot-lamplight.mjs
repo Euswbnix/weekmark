@@ -35,6 +35,14 @@ const startSync = `[...document.querySelectorAll(".pl-toolbar button")].at(-1).c
 const openCapsule = `document.querySelector(".pl-accessory button").click();
   await wait(500);`;
 
+/** Scroll <main> so the heading with this text (en or zh-CN) sits just under the toolbar. */
+function scrollToHeading(en, zh) {
+  return `const h = [...document.querySelectorAll("h2, h3")].find((e) =>
+    [${JSON.stringify(en)}, ${JSON.stringify(zh)}].includes(e.textContent.trim()));
+  if (h) { h.scrollIntoView({ block: "start" }); document.querySelector("main").scrollTop -= 56; }
+  await wait(400);`;
+}
+
 /**
  * Screens: a route (hash), a mock scenario and, optionally, steps to reach a state. `unreleased`:
  * the screen shows UI the release doesn't have yet.
@@ -85,6 +93,47 @@ const SCREENS = {
     hash: "#/sources",
     scenario: "demo",
     act: `document.querySelector("main").scrollTop = 320; await wait(400);`,
+  },
+  // AI settings (M1/M2, behind AI_SETUP_ENABLED; mock mode only, so `unreleased`): the
+  // ChatGPT-plan card, API-key and local rows, feature routing, budget, usage, and the
+  // disclosure sheet.
+  "ai-models": {
+    hash: "#/settings",
+    unreleased: true,
+    scenario: "codex-plus",
+    act: scrollToHeading("AI models", "AI 模型"),
+  },
+  "ai-keys": {
+    hash: "#/settings",
+    unreleased: true,
+    scenario: "ai-key",
+    act: scrollToHeading("AI models", "AI 模型"),
+  },
+  "ai-features": {
+    hash: "#/settings",
+    unreleased: true,
+    scenario: "ai-key",
+    act: scrollToHeading("Which model does what", "各项功能用哪个模型"),
+  },
+  "ai-usage": {
+    hash: "#/settings",
+    unreleased: true,
+    scenario: "ai-key",
+    act: scrollToHeading("AI usage", "AI 用量"),
+  },
+  "ai-codex-setup": {
+    hash: "#/settings",
+    unreleased: true,
+    scenario: "codex-outdated-app",
+    act: scrollToHeading("AI models", "AI 模型"),
+  },
+  "ai-disclosure": {
+    hash: "#/settings",
+    unreleased: true,
+    scenario: "ai-disclosure-changed",
+    act: `${scrollToHeading("AI models", "AI 模型")}
+  [...document.querySelectorAll("button")].find((b) => /Review and turn on|查看并启用/.test(b.textContent)).click();
+  await wait(500);`,
   },
   // The accessory bar mid-sync, and its details.
   syncing: { hash: "#/courses", scenario: "demo", act: startSync },

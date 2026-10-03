@@ -35,6 +35,7 @@ export function AiModelsSection() {
   const container = useRef<HTMLDivElement>(null);
 
   const backends = status.data?.backends ?? [];
+  const offered = status.data?.chatgpt_plan_offered ?? false;
   // The ChatGPT plan has its own card; API keys and local models are listed below it.
   const codex = backends.find((b) => b.backend.kind === "codex") ?? null;
   const providerBackends = backends.filter((b) => b.backend.kind === "provider");
@@ -61,14 +62,22 @@ export function AiModelsSection() {
         </p>
       ) : (
         <div ref={container} className="space-y-5">
-          <ChatGptCard
-            backend={codex}
-            onShowDisclosure={(signedIn) => showDisclosure({ kind: "codex" }, signedIn)}
-          />
+          {/* Only where this build offers the ChatGPT plan (OpenAI's written confirmation). */}
+          {offered ? (
+            <ChatGptCard
+              backend={codex}
+              onShowDisclosure={(signedIn) => showDisclosure({ kind: "codex" }, signedIn)}
+            />
+          ) : null}
           {providerBackends.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("settings.empty")}</p>
           ) : (
-            <ul aria-label={t("settings.backendsLabel")} className="space-y-3">
+            // The ChatGPT card's closing hairline is this list's top rule; without the card, the
+            // list has its own.
+            <ul
+              aria-label={t("settings.backendsLabel")}
+              className={offered ? "divide-y border-b" : "divide-y border-y"}
+            >
               {providerBackends.map((backend) => (
                 <BackendRow
                   key={backendKey(backend.backend)}

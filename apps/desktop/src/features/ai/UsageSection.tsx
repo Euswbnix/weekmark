@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { UsageRow, UsageSummary } from "@/api/ai";
-import { useUsageSummary } from "@/api/ai-queries";
+import { useAiStatus, useUsageSummary } from "@/api/ai-queries";
 import {
   Select,
   SelectContent,
@@ -45,6 +45,8 @@ export function UsageSection() {
   const [chosen, setChosen] = useState<string | null>(null);
   const month = chosen && months.includes(chosen) ? chosen : (months[0] ?? null);
   const usage = useUsageSummary(month);
+  // Without the ChatGPT plan in this build, nothing here names it (no plan rows, no weekly runs).
+  const offered = useAiStatus().data?.chatgpt_plan_offered ?? false;
   const errorText = useAiErrorText();
   const monthId = useId();
 
@@ -75,12 +77,19 @@ export function UsageSection() {
         </p>
       ) : (
         <>
-          <UsageTable summary={usage.data} />
-          {month === months[0] ? <BudgetLine summary={usage.data} /> : null}
+          <UsageTable summary={offered ? usage.data : withoutPlan(usage.data)} />
+          {month === months[0] ? (
+            <BudgetLine summary={offered ? usage.data : withoutPlan(usage.data)} />
+          ) : null}
         </>
       )}
     </SettingsSection>
   );
+}
+
+/** The summary without the ChatGPT plan's rows and weekly runs (the plan isn't offered). */
+function withoutPlan(summary: UsageSummary): UsageSummary {
+  return { ...summary, rows: summary.rows.filter((r) => r.cost_basis !== "plan"), mode_a: null };
 }
 
 function UsageTable({ summary }: { summary: UsageSummary }) {

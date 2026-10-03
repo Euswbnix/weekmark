@@ -30,6 +30,11 @@ const FILES_DIR: &str = "files";
 const SYNC_LOCK_FILE: &str = "sync.lock";
 /// Course names remembered for the report's pseudonymisation (see `course_aliases_path_in`).
 const COURSE_ALIASES_FILE: &str = "course-aliases.json";
+/// Under the local data dir (`local_data_dir`): downloaded runtimes, Codex's own home, and the
+/// per-run scratch folders of model runs.
+const RUNTIMES_DIR: &str = "runtimes";
+const CODEX_HOME_DIR: &str = "codex-home";
+const AI_RUNS_DIR: &str = "ai-runs";
 
 /// Root data directory (not created). Errors with `Error::NoDataDir` when neither
 /// `PAGELAMP_HOME` nor a platform data directory is available.
@@ -44,6 +49,37 @@ pub fn data_dir() -> Result<PathBuf> {
 pub fn platform_data_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("dev", "PageLamp", "PageLamp")
         .map(|dirs| dirs.data_dir().to_path_buf())
+}
+
+/// Root of large, machine-specific data that must not roam with the user's profile: the Codex
+/// runtime (≈250 MB per version), Codex's sign-in (`codex-home`) and per-run scratch folders.
+/// `%LOCALAPPDATA%` on Windows, where `data_dir` is the roaming `%APPDATA%`; the same as
+/// `data_dir` on macOS and Linux, and whenever `PAGELAMP_HOME` is set (design §2.3).
+pub fn local_data_dir() -> Result<PathBuf> {
+    data_dir_from(std::env::var_os(HOME_ENV), platform_local_data_dir())
+}
+
+/// The platform's non-roaming data directory, ignoring `PAGELAMP_HOME`.
+pub fn platform_local_data_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("dev", "PageLamp", "PageLamp")
+        .map(|dirs| dirs.data_local_dir().to_path_buf())
+}
+
+/// `<local>/runtimes/codex`: one folder per installed Codex version.
+pub fn codex_runtime_dir_in(local: &Path) -> PathBuf {
+    local.join(RUNTIMES_DIR).join("codex")
+}
+
+/// `<local>/codex-home`: the dedicated `CODEX_HOME` (Codex's config and, without a keychain,
+/// its sign-in). Never read by PageLamp beyond its own config and lock file, and never included
+/// in logs or reports.
+pub fn codex_home_in(local: &Path) -> PathBuf {
+    local.join(CODEX_HOME_DIR)
+}
+
+/// `<local>/ai-runs`: an empty working folder per model run, deleted after it.
+pub fn ai_runs_dir_in(local: &Path) -> PathBuf {
+    local.join(AI_RUNS_DIR)
 }
 
 /// The resolution rules of `data_dir` with their inputs passed in (`PAGELAMP_HOME` value,
@@ -176,6 +212,9 @@ const OWN_ENTRIES: &[&str] = &[
     SYNC_LOCK_FILE,
     "logs",
     COURSE_ALIASES_FILE,
+    RUNTIMES_DIR,
+    CODEX_HOME_DIR,
+    AI_RUNS_DIR,
     ".DS_Store",
 ];
 
@@ -261,6 +300,45 @@ mod tests {
             Ok(dir) => assert_eq!(Some(dir), platform),
             Err(err) => assert!(platform.is_none() && matches!(err, Error::NoDataDir)),
         }
+    }
+
+    #[test]
+    fn local_data_follows_pagelamp_home_and_holds_the_codex_layout() {
+        let local = data_dir_from(
+            Some(OsString::from("/demo/pagelamp-home")),
+            Some(PathBuf::from("/demo/platform-local")),
+        )
+        .unwrap();
+        assert_eq!(local, PathBuf::from("/demo/pagelamp-home"));
+        let local = Path::new("/demo/local");
+        assert_eq!(
+            codex_runtime_dir_in(local),
+            PathBuf::from("/demo/local/runtimes/codex")
+        );
+        assert_eq!(
+            codex_home_in(local),
+            PathBuf::from("/demo/local/codex-home")
+        );
+        assert_eq!(ai_runs_dir_in(local), PathBuf::from("/demo/local/ai-runs"));
+    }
+
+    // Two runtimes of ≈250 MB each and Codex's sign-in must not roam with a Windows profile.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_local_data_is_not_roaming() {
+        let local = platform_local_data_dir().unwrap();
+        assert!(
+            local.to_string_lossy().contains(r"\AppData\Local\"),
+            "{}",
+            local.display()
+        );
+        assert_ne!(Some(local), platform_data_dir());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn local_data_is_the_data_dir_elsewhere() {
+        assert_eq!(platform_local_data_dir(), platform_data_dir());
     }
 
     #[test]

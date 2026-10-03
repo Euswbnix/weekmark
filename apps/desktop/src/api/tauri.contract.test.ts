@@ -144,6 +144,16 @@ it("sends the commands and arguments the Rust side expects", async () => {
   await api.usageSummary("2026-09-01");
   await api.usageSummary(null);
   await api.removeAllAiData();
+  await api.codexStatus();
+  await api.installCodex("contract-test-install", () => {});
+  await api.cancelCodexInstall("contract-test-install");
+  await api.removeCodex();
+  await api.codexLogin("device_code", () => {});
+  await api.cancelCodexLogin();
+  await api.codexLogout();
+  await api.setModeAWeeklyCap(40);
+  await api.setModeAWeeklyCap(null);
+  await api.setCodexSource("managed");
   await api.updaterStatus();
   await api.checkForUpdate();
   await api.installUpdate(() => {});

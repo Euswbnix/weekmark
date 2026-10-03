@@ -220,7 +220,7 @@ export function createMockAi(ctx: MockAiContext): AiApi {
       break;
   }
   // Mode A scenarios (M2): signed in and routed to the pin's models, unless signed out.
-  const codexStart = codex.backendStatus(null);
+  const codexStart = codex.backendStatus(null, false);
   if (codexStart && scenario !== "codex-signed-out") {
     if (codex.initiallyAcknowledged) acknowledged.set("codex", codexStart.disclosure.version);
     for (const feature of FEATURES) {
@@ -246,8 +246,14 @@ export function createMockAi(ctx: MockAiContext): AiApi {
     }
     return findProvider(backend.provider_id);
   }
+  /** Some feature is routed to the ChatGPT plan. */
+  function codexChosen(): boolean {
+    return [...features.values()].some((c) => c?.backend.kind === "codex");
+  }
   function codexBackend(): AiBackendStatus {
-    const found = codex.backendStatus(acknowledged.get("codex") ?? null);
+    // Not offered: models, "Test", the Codex choice and its disclosure all refuse.
+    codex.requireOffered();
+    const found = codex.backendStatus(acknowledged.get("codex") ?? null, codexChosen());
     if (!found) {
       throw new ApiError("model", "Codex isn't installed.", { model_error: "runtime_missing" });
     }
@@ -385,9 +391,12 @@ export function createMockAi(ctx: MockAiContext): AiApi {
     aiStatus: async (): Promise<AiStatus> => {
       await ctx.delay();
       return structuredClone({
+        // Off except in the codex-* scenarios, as in every build until OpenAI confirms in
+        // writing (CHATGPT_PLAN_OFFERED in the facade).
+        chatgpt_plan_offered: codex.offered,
         // Priority order (design §7): the ChatGPT plan first, then keys and local models.
         backends: [
-          codex.backendStatus(acknowledged.get("codex") ?? null),
+          codex.backendStatus(acknowledged.get("codex") ?? null, codexChosen()),
           ...providers.map(backendStatus),
         ].filter((b): b is AiBackendStatus => b !== null),
         providers,
@@ -508,6 +517,10 @@ export function createMockAi(ctx: MockAiContext): AiApi {
 
     acknowledgeUnpricedModel: async (backend, model) => {
       await ctx.delay();
+      // Like the facade: the plan has no price to acknowledge.
+      if (backend.kind === "codex") {
+        throw new ApiError("invalid", "The ChatGPT plan has no per-run price.");
+      }
       statusOf(backend);
       unpricedAcks.add(`${backendKey(backend)}/${model}`);
     },
@@ -537,6 +550,10 @@ export function createMockAi(ctx: MockAiContext): AiApi {
         would_block: reason,
       });
       if (!choice) return gateBlocked("no_model_chosen");
+      // A Codex routing stored while the plan was offered blocks instead of running.
+      if (choice.backend.kind === "codex" && !codex.offered) {
+        return gateBlocked("backend_disabled_in_this_build");
+      }
       const info = modelsFor(choice.backend).find((m) => m.id === choice.model) ?? null;
       const onDevice = info?.on_device ?? false;
       const courses =
@@ -605,7 +622,7 @@ export function createMockAi(ctx: MockAiContext): AiApi {
           .filter((r) => r.cost_basis === "priced")
           .reduce((sum, r) => sum + (r.micro_usd ?? 0), 0),
         budget: budgetStatus(),
-        mode_a: codex.modeA(),
+        mode_a: codex.modeA(codexChosen()),
       });
     },
 

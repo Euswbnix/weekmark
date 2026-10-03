@@ -1,7 +1,7 @@
 //! User-facing notices printed by the CLI (edit the wording here; the product and command
 //! names come from `pagelamp_core::brand`).
 
-use pagelamp_app::ai::{CostKind, DisclosureFacts, RetentionFact, TrainingFact};
+use pagelamp_app::ai::{AdminVisibility, CostKind, DisclosureFacts, RetentionFact, TrainingFact};
 use pagelamp_core::ai::{BlockReason, ModelErrorKind};
 use pagelamp_core::brand::{CLI_NAME, PRODUCT_NAME};
 
@@ -85,8 +85,18 @@ pub fn disclosure(facts: &DisclosureFacts) -> String {
         RetentionFact::ProviderTerms => format!("  • Storage: as {name}'s terms say."),
         RetentionFact::OnDevice => "  • Storage: stays on this computer.".to_string(),
     });
-    if facts.admin_visibility {
-        lines.push("  • Your school's or company's administrator can see this use.".to_string());
+    match facts.admin_visibility {
+        AdminVisibility::Yes => lines.push(
+            "  • Your account is a school or workspace account: its administrators can see what \
+             is sent, including text from your course materials."
+                .to_string(),
+        ),
+        AdminVisibility::Unknown => lines.push(
+            "  • If your account is an Edu or workspace account, its administrators may be able \
+             to see what is sent, including text from your course materials."
+                .to_string(),
+        ),
+        AdminVisibility::No => {}
     }
     if let Some(age) = facts.min_age {
         lines.push(format!(

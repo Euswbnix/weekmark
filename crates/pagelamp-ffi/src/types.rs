@@ -23,12 +23,15 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::SystemTime;
 
 use pagelamp_app::ai::{
-    AiBackendStatus, AiDoctor, AiProviderCheck, AiStatus, BackendKind, BackendProblem, BackendRef,
-    BackendState, BudgetStatus, CostBasis, CostEstimate, CostKind, DisclosureFacts,
-    EstimateRequest, FeatureRouting, GenEvent, GenNoticeCode, GenStage, GenerationMeta,
-    LocalServer, LocalServerKind, ModelChoice, ModelInfo, ModelProviderRecord, ProbeReport,
-    ProviderPreset, ProviderWire, Recipient, RemoveAiDataReport, RetentionFact, SentData,
-    StructuredOutputTier, TokenUsage, TrainingFact, UsageRow, UsageSummary,
+    AdminVisibility, AiBackendStatus, AiDoctor, AiProviderCheck, AiStatus, BackendKind,
+    BackendProblem, BackendRef, BackendState, BudgetStatus, ChatGptPlanType, CodexLogin,
+    CodexLoginMethod, CodexLoginState, CodexOutdatedAction, CodexRuntime, CodexRuntimeState,
+    CodexSource, CodexStatus, CostBasis, CostEstimate, CostKind, DisclosureFacts, EstimateRequest,
+    FeatureRouting, GenEvent, GenNoticeCode, GenStage, GenerationMeta, LocalServer,
+    LocalServerKind, LoginEvent, ModeAUsage, ModelChoice, ModelInfo, ModelProviderRecord,
+    ProbeReport, ProviderPreset, ProviderWire, Recipient, RemoveAiDataReport, RetentionFact,
+    RuntimeEvent, SentData, StructuredOutputTier, SystemCodex, TokenUsage, TrainingFact, UsageRow,
+    UsageSummary,
 };
 use pagelamp_app::diagnostics::{
     CrashReport, DoctorReport, DoctorSource, ExtractWorkerCheck, ExtractWorkerStatus,
@@ -1026,6 +1029,7 @@ pub struct UpdateCheckRecord {
 pub enum ActivityKind {
     Sync,
     Download,
+    CodexInstall,
 }
 
 #[uniffi::remote(Record)]
@@ -1149,6 +1153,8 @@ pub enum BackendProblem {
     ServerNotRunning,
     ModelMissing,
     DisclosureChanged,
+    NotSignedIn,
+    RuntimeMissing,
 }
 
 #[uniffi::remote(Record)]
@@ -1168,6 +1174,8 @@ pub struct AiStatus {
     pub providers: Vec<ModelProviderRecord>,
     pub features: Vec<FeatureRouting>,
     pub budget: BudgetStatus,
+    #[uniffi(default)]
+    pub chatgpt_plan_offered: bool,
 }
 
 #[uniffi::remote(Record)]
@@ -1184,12 +1192,19 @@ pub struct DisclosureFacts {
     pub recipient: Recipient,
     pub training: TrainingFact,
     pub retention: RetentionFact,
-    pub admin_visibility: bool,
+    pub admin_visibility: AdminVisibility,
     pub min_age: Option<u8>,
     pub guardian_permission: bool,
     pub cost: CostKind,
     pub on_device: bool,
     pub location: Option<String>,
+}
+
+#[uniffi::remote(Enum)]
+pub enum AdminVisibility {
+    No,
+    Unknown,
+    Yes,
 }
 
 #[uniffi::remote(Enum)]
@@ -1365,6 +1380,14 @@ pub struct UsageSummary {
     pub rows: Vec<UsageRow>,
     pub total_micro_usd: u64,
     pub budget: BudgetStatus,
+    #[uniffi(default)]
+    pub mode_a: Option<ModeAUsage>,
+}
+
+#[uniffi::remote(Record)]
+pub struct ModeAUsage {
+    pub runs_this_week: u32,
+    pub weekly_cap: Option<u32>,
 }
 
 #[uniffi::remote(Record)]
@@ -1627,6 +1650,118 @@ pub struct SegmentInput {
     pub first_class: IsoDate,
     pub last_class: Option<IsoDate>,
     pub restart_numbering: bool,
+}
+
+// ----- mode A: the ChatGPT plan through official Codex (M2) ------------------------------------
+
+#[uniffi::remote(Enum)]
+pub enum CodexRuntimeState {
+    NotInstalled,
+    Installed,
+    UnsupportedPlatform,
+}
+
+#[uniffi::remote(Enum)]
+pub enum CodexSource {
+    Managed,
+    System,
+}
+
+#[uniffi::remote(Record)]
+pub struct CodexRuntime {
+    pub state: CodexRuntimeState,
+    pub source: CodexSource,
+    pub installed_version: Option<String>,
+    pub pinned_version: String,
+    pub download_bytes: u64,
+    pub untested_platform: bool,
+}
+
+#[uniffi::remote(Enum)]
+pub enum CodexOutdatedAction {
+    None,
+    InstallPin,
+    UpdatePagelamp,
+}
+
+#[uniffi::remote(Enum)]
+pub enum CodexLoginState {
+    SignedOut,
+    Chatgpt,
+    ApiKey,
+}
+
+#[uniffi::remote(Enum)]
+pub enum ChatGptPlanType {
+    Free,
+    Go,
+    Plus,
+    Pro,
+    Business,
+    Edu,
+    Enterprise,
+    Unknown,
+}
+
+#[uniffi::remote(Record)]
+pub struct CodexLogin {
+    pub state: CodexLoginState,
+    pub plan_type: Option<ChatGptPlanType>,
+}
+
+#[uniffi::remote(Record)]
+pub struct SystemCodex {
+    pub version: String,
+    pub in_tested_range: bool,
+}
+
+#[uniffi::remote(Record)]
+pub struct CodexStatus {
+    pub runtime: CodexRuntime,
+    pub outdated_action: CodexOutdatedAction,
+    pub login: CodexLogin,
+    pub exec_available: Option<bool>,
+    pub weekly_cap: Option<u32>,
+    pub runs_this_week: u32,
+    pub system_codex: Option<SystemCodex>,
+    #[uniffi(default)]
+    pub chatgpt_plan_offered: bool,
+}
+
+#[uniffi::remote(Enum)]
+pub enum RuntimeEvent {
+    DownloadStarted {
+        total_bytes: u64,
+    },
+    Progress {
+        downloaded_bytes: u64,
+        total_bytes: u64,
+    },
+    Verifying,
+    Installing,
+    Done {
+        version: String,
+    },
+}
+
+#[uniffi::remote(Enum)]
+pub enum CodexLoginMethod {
+    Browser,
+    DeviceCode,
+}
+
+#[uniffi::remote(Enum)]
+pub enum LoginEvent {
+    BrowserOpened {
+        url: Option<String>,
+    },
+    DeviceCode {
+        verification_url: String,
+        user_code: String,
+        expires_in_secs: Option<u32>,
+    },
+    Waiting,
+    Done,
 }
 
 // ---------------------------------------------------------------------------------------------

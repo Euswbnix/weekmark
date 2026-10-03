@@ -39,7 +39,9 @@
       "key_missing": "钥匙串里找不到这个密钥。重新填写密钥后才能继续使用这个服务。",
       "server_not_running": "模型服务没有运行。",
       "model_missing": "你选的某个模型已经不再提供，请在下面另选一个。",
-      "disclosure_changed": "自你上次查看以来，这个服务会收到的内容有了变化。"
+      "disclosure_changed": "自你上次查看以来，这个服务会收到的内容有了变化。",
+      "not_signed_in": "Codex 还没有登录 ChatGPT。登录后才能使用你的订阅。",
+      "runtime_missing": "还没有安装 Codex。下载后才能使用你的 ChatGPT 订阅。"
     },
     "keyEnds": "密钥末尾为 {{last4}}",
     "turnOn": "查看并启用",
@@ -111,7 +113,8 @@
     },
     "admin": {
       "heading": "还有谁能看到",
-      "body": "如果你的账户属于学校或雇主，它的管理员可能看得到发送的内容。"
+      "yes": "你的账户属于学校或工作区：它的管理员能看到 PageLamp 通过它发送的内容，包括课程资料中的文字。",
+      "unknown": "如果你的 ChatGPT 账户属于 Edu 或工作区，它的管理员可能看得到 PageLamp 通过它发送的内容，包括课程资料中的文字。"
     },
     "cost": {
       "heading": "费用",
@@ -214,7 +217,8 @@
     "button": "删除所有 AI 数据",
     "hint": "删除你的密钥、模型选择、使用记录，以及 {{product}} 用 AI 写出的所有内容。",
     "title": "删除所有 AI 数据？",
-    "body": "这会从钥匙串中删除你的 API 密钥，并删除模型选择、使用记录、AI 设置，以及 {{product}} 写出的所有计划和讲解，还会让 {{product}} 的 Codex 退出 ChatGPT 登录。你的课程、课程规则，以及你对“能否分享资料”的回答都会保留。",
+    "body": "这会从钥匙串中删除你的 API 密钥，并删除模型选择、使用记录、AI 设置，以及 {{product}} 用 AI 写出的所有内容。你的课程、课程规则，以及你对“能否分享资料”的回答都会保留。",
+    "bodyCodex": "这会从钥匙串中删除你的 API 密钥，并删除模型选择、使用记录、AI 设置，以及 {{product}} 用 AI 写出的所有内容，还会让 {{product}} 的 Codex 退出 ChatGPT 登录。你的课程、课程规则，以及你对“能否分享资料”的回答都会保留。",
     "confirm": "全部删除",
     "done": "已删除所有 AI 数据"
   },
@@ -351,6 +355,7 @@
       "enterprise": "Enterprise"
     },
     "adminWarning": "这是学校或公司的工作区：它的管理员能看到 PageLamp 通过它发送的内容，包括课程资料中的文字。",
+    "adminUnknown": "如果这是 Edu 或工作区账户，它的管理员可能看得到 PageLamp 通过它发送的内容。",
     "apiKeyWarning": "Codex 目前用 API 密钥登录，运行费用会计入这个密钥，而不是你的 ChatGPT 订阅。要使用订阅，请先退出，再用 ChatGPT 登录。",
     "noExec": "你的 ChatGPT 订阅不允许其他应用运行 Codex。你仍然可以使用 API 密钥、这台电脑上的模型，或者你自己的 AI 应用。",
     "noExecConnect": "连接你的 AI 应用",

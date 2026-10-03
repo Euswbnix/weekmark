@@ -597,6 +597,60 @@
     "args": {}
   },
   {
+    "cmd": "codex_status",
+    "args": {}
+  },
+  {
+    "cmd": "install_codex",
+    "args": {
+      "installId": "contract-test-install",
+      "onEvent": "__CHANNEL__:0"
+    }
+  },
+  {
+    "cmd": "cancel_codex_install",
+    "args": {
+      "installId": "contract-test-install"
+    }
+  },
+  {
+    "cmd": "remove_codex",
+    "args": {}
+  },
+  {
+    "cmd": "codex_login",
+    "args": {
+      "method": "device_code",
+      "onEvent": "__CHANNEL__:0"
+    }
+  },
+  {
+    "cmd": "cancel_codex_login",
+    "args": {}
+  },
+  {
+    "cmd": "codex_logout",
+    "args": {}
+  },
+  {
+    "cmd": "set_mode_a_weekly_cap",
+    "args": {
+      "runs": 40
+    }
+  },
+  {
+    "cmd": "set_mode_a_weekly_cap",
+    "args": {
+      "runs": null
+    }
+  },
+  {
+    "cmd": "set_codex_source",
+    "args": {
+      "source": "managed"
+    }
+  },
+  {
     "cmd": "updates_status",
     "args": {}
   },

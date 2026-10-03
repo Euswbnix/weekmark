@@ -4,6 +4,7 @@
 
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import type { CodexSource } from "./ai";
 import {
   type AiFeature,
   type BackendRef,
@@ -13,7 +14,6 @@ import {
   type ModelChoice,
 } from "./ai";
 import { useApi } from "./context";
-import type { CodexSource } from "./provisional/codex";
 import { queryKeys } from "./queries";
 import type { IsoDate } from "./types";
 

@@ -2,10 +2,14 @@ import type {
   AiFeature,
   AiStatus,
   BackendRef,
+  CodexLoginMethod,
+  CodexSource,
+  CodexStatus,
   CostEstimate,
   EstimateRequest,
   GenEvent,
   LocalServer,
+  LoginEvent,
   MaterialSharing,
   ModelChoice,
   ModelInfo,
@@ -13,15 +17,9 @@ import type {
   ProbeReport,
   ProviderPreset,
   RemoveAiDataReport,
+  RuntimeEvent,
   UsageSummary,
 } from "./ai";
-import type {
-  CodexLoginMethod,
-  CodexSource,
-  CodexStatus,
-  LoginEvent,
-  RuntimeEvent,
-} from "./provisional/codex";
 import type {
   AiPolicy,
   AppStatus,
@@ -297,7 +295,7 @@ export interface PageLampApi {
   cancelCodexLogin(): Promise<void>;
   codexLogout(): Promise<CodexStatus>;
   /** Use PageLamp's own Codex or an installed one in the tested range (D12). */
-  setCodexSource(source: CodexSource): Promise<void>;
+  setCodexSource(source: CodexSource): Promise<CodexStatus>;
   /** PageLamp's ChatGPT-plan runs per week; null = no cap. */
   setModeAWeeklyCap(runs: number | null): Promise<void>;
 

@@ -2,10 +2,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import type { CodexLoginMethod, LoginEvent } from "@/api/ai";
 import { aiKeys } from "@/api/ai-queries";
 import { useApi } from "@/api/context";
 import { type ApiError, toApiError } from "@/api/errors";
-import type { CodexLoginMethod, LoginEvent } from "@/api/provisional/codex";
 import { CopyButton } from "@/components/common/CopyButton";
 import { ExternalLink } from "@/components/common/ExternalLink";
 import { Button } from "@/components/ui/button";
@@ -123,6 +123,7 @@ function SignIn({ onDone, onSignedIn }: { onDone: () => void; onSignedIn: () => 
           </p>
           <RadioGroup
             aria-labelledby={ids.method}
+            className="gap-0 divide-y"
             value={method}
             onValueChange={(value) => setMethod(value as CodexLoginMethod)}
           >
@@ -130,7 +131,10 @@ function SignIn({ onDone, onSignedIn }: { onDone: () => void; onSignedIn: () => 
               const id = `${ids.options}-${option}`;
               const key = option === "browser" ? "browser" : "device";
               return (
-                <div key={option} className="relative flex items-start gap-3 rounded-lg border p-3">
+                <div
+                  key={option}
+                  className="relative flex items-start gap-3 rounded-row px-3 py-3 transition-colors hover:bg-muted has-data-checked:bg-ink/9"
+                >
                   <RadioGroupItem
                     id={id}
                     value={option}
@@ -191,7 +195,7 @@ function Waiting({ event }: { event: LoginEvent | null }) {
         </p>
         <div className="flex items-center gap-3">
           <span className="sr-only">{t("codex.signInDialog.codeLabel")}</span>
-          <code className="rounded-md border px-3 py-1.5 font-mono text-lg tracking-widest">
+          <code className="pl-concentric bg-muted px-3 py-1.5 font-mono text-lg tracking-widest [--pl-pad:1rem]">
             {event.user_code}
           </code>
           <CopyButton text={event.user_code} />

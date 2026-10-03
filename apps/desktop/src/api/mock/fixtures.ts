@@ -59,10 +59,12 @@ export type MockScenario =
   | "ai-budget"
   | "ai-disclosure-changed"
   | "ai-errors"
-  // The ChatGPT plan through Codex (M2): installed and signed out / Plus (12 of 40 runs this week)
-  // / an Edu workspace / signed in with an API key / an installed Codex older than the pin /
-  // RuntimeOutdated at the pin (update PageLamp) / Free without `codex exec` / the weekly cap
-  // reached. The demo has no Codex installed.
+  // The ChatGPT plan through Codex (M2), offered only in these scenarios (every build leaves it
+  // off until OpenAI confirms in writing): not installed yet / installed and signed out / Plus (12
+  // of 40 runs this week) / an Edu workspace / signed in with an API key / an installed Codex
+  // older than the pin / RuntimeOutdated at the pin (update PageLamp) / Free without
+  // `codex exec` / the weekly cap reached. Elsewhere there is no ChatGPT card.
+  | "codex-not-installed"
   | "codex-signed-out"
   | "codex-plus"
   | "codex-edu"
@@ -100,6 +102,7 @@ export const MOCK_SCENARIOS: readonly MockScenario[] = [
   "ai-budget",
   "ai-disclosure-changed",
   "ai-errors",
+  "codex-not-installed",
   "codex-signed-out",
   "codex-plus",
   "codex-edu",

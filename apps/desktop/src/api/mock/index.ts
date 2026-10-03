@@ -7,8 +7,9 @@
 // Scenarios: demo (default) · empty · expired · error · busy · crashed; updates (M0.4):
 // update-available · upgrader · upgrader-from-01 · updated · deb; worker-blocked (M0.5); AI setup
 // (M1): ai-key · ai-local · ai-unpriced · ai-budget · ai-disclosure-changed · ai-errors; the
-// ChatGPT plan (M2): codex-signed-out · codex-plus · codex-edu · codex-api-key ·
-// codex-outdated-pin · codex-outdated-app · codex-free · codex-cap (the demo: not installed);
+// ChatGPT plan (M2), offered only in these: codex-not-installed · codex-signed-out · codex-plus ·
+// codex-edu · codex-api-key · codex-outdated-pin · codex-outdated-app · codex-free · codex-cap
+// (elsewhere the plan isn't offered, as in every build until OpenAI confirms in writing);
 // course weeks and lifecycle (M0.10): uoft-fall · phases · all-past (see courseScenarios.ts).
 //
 // Secrets passed to this mock (tokens, feed URLs) are validated and then dropped — never stored,

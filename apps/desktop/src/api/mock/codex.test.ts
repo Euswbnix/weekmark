@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { LoginEvent, RuntimeEvent } from "../provisional/codex";
+import type { LoginEvent, RuntimeEvent } from "../ai";
 import { createMockApi } from ".";
 import { MOCK_CODEX_PIN, MOCK_DEVICE_CODE } from "./codex";
 
 const fast = { latencyMs: 0, syncStepMs: 0 };
+/** The ChatGPT plan offered, nothing installed yet. */
+const notInstalled = { ...fast, scenario: "codex-not-installed" } as const;
 const codex = { kind: "codex" } as const;
 const DEMO101 = "folder:demo-courses/course/DEMO101";
 
 describe("mock ChatGPT plan (Codex)", () => {
   it("starts not installed, with the download size, and not among the backends", async () => {
-    const api = createMockApi(fast);
+    const api = createMockApi(notInstalled);
     const status = await api.codexStatus();
     expect(status.runtime).toMatchObject({
       state: "not_installed",
@@ -20,7 +22,7 @@ describe("mock ChatGPT plan (Codex)", () => {
   });
 
   it("installs with progress, then signs in and asks for the disclosure", async () => {
-    const api = createMockApi(fast);
+    const api = createMockApi(notInstalled);
     const events: RuntimeEvent[] = [];
     const installed = await api.installCodex("install-1", (e) => events.push(e));
     expect(events.map((e) => e.type)).toEqual([
@@ -45,7 +47,8 @@ describe("mock ChatGPT plan (Codex)", () => {
     const login: LoginEvent[] = [];
     const signedIn = await api.codexLogin("browser", (e) => login.push(e));
     expect(login.map((e) => e.type)).toEqual(["browser_opened", "waiting", "done"]);
-    expect(signedIn.login).toEqual({ state: "chatgpt", plan_type: "plus" });
+    // `codex login status` doesn't say the plan type yet (A7).
+    expect(signedIn.login).toEqual({ state: "chatgpt", plan_type: "unknown" });
     const [backend] = (await api.aiStatus()).backends;
     expect(backend).toMatchObject({ state: "needs_disclosure" });
     await api.acknowledgeAiDisclosure(codex, backend?.disclosure.version ?? 0);
@@ -53,7 +56,7 @@ describe("mock ChatGPT plan (Codex)", () => {
   });
 
   it("cancels a download (nothing installed) and a sign-in", async () => {
-    const api = createMockApi({ latencyMs: 0, syncStepMs: 5 });
+    const api = createMockApi({ ...notInstalled, syncStepMs: 5 });
     const install = api.installCodex("install-2", (e) => {
       if (e.type === "download_started") void api.cancelCodexInstall("install-2");
     });
@@ -76,12 +79,12 @@ describe("mock ChatGPT plan (Codex)", () => {
     expect((await plus.aiStatus()).backends[0]?.disclosure).toMatchObject({
       training: { kind: "may_train" },
       cost: "plan_credits",
-      admin_visibility: false,
+      admin_visibility: "no",
     });
     const edu = createMockApi({ ...fast, scenario: "codex-edu" });
     expect((await edu.aiStatus()).backends[0]).toMatchObject({
       state: "needs_disclosure",
-      disclosure: { training: { kind: "no_training" }, admin_visibility: true },
+      disclosure: { training: { kind: "no_training" }, admin_visibility: "yes" },
     });
   });
 
@@ -121,6 +124,8 @@ describe("mock ChatGPT plan (Codex)", () => {
   it("reports an API-key sign-in and a plan without codex exec", async () => {
     const key = createMockApi({ ...fast, scenario: "codex-api-key" });
     expect((await key.codexStatus()).login.state).toBe("api_key");
+    // No plan type: the admin warning is conditional, never left out.
+    expect((await key.aiStatus()).backends[0]?.disclosure.admin_visibility).toBe("unknown");
     const free = createMockApi({ ...fast, scenario: "codex-free" });
     expect(await free.codexStatus()).toMatchObject({
       exec_available: false,
@@ -140,5 +145,17 @@ describe("mock ChatGPT plan (Codex)", () => {
     const status = await other.aiStatus();
     expect(status.backends).toEqual([]);
     expect(status.features.every((f) => f.choice === null)).toBe(true);
+  });
+
+  it("reports what's missing, and refuses an unpriced acknowledgement for the plan", async () => {
+    const api = createMockApi({ ...fast, scenario: "codex-signed-out" });
+    expect((await api.aiStatus()).backends[0]).toMatchObject({
+      state: "needs_setup",
+      problems: ["not_signed_in"],
+    });
+    await expect(api.acknowledgeUnpricedModel(codex, "gpt-6-luna")).rejects.toMatchObject({
+      kind: "invalid",
+    });
+    expect(await api.setCodexSource("managed")).toMatchObject({ runtime: { source: "managed" } });
   });
 });

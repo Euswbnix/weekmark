@@ -1,0 +1,88 @@
+# The Codex runtime PageLamp installs for "Use my ChatGPT plan" (design §2.3, plan M2).
+#
+# Only the files listed here are ever installed: PageLamp trusts nothing but these SHA-256
+# values. The maintainers bump the pin at least monthly, before every model retirement, and out
+# of cycle when a run fails with "requires a newer version of Codex"; a second maintainer
+# reviews.
+#
+# Bumping: take `version` from github.com/openai/codex/releases (a stable `rust-v<version>`
+# release, never an alpha), then each asset's `size` and `digest` from
+#   gh api repos/openai/codex/releases/tags/rust-v<version> --jq '.assets[] | "\(.name) \(.size) \(.digest)"'
+# and the models from that tag's `codex-rs/models-manager/models.json`: every `supported` model
+# must have a `minimal_client_version` at or below `version`.
+
+version = "0.158.0"
+tag = "rust-v0.158.0"
+
+# "Use my installed Codex" (D12) accepts installed versions from `tested_min` up to, but not
+# including, `tested_below`.
+tested_min = "0.158.0"
+tested_below = "0.159.0"
+
+[models]
+# The only models a run may name with `-m` (never the account's default model: a newer default
+# made 0.144.1 fail every run with "requires a newer version of Codex", 2026-09-28).
+# minimal_client_version in 0.158.0: gpt-6-astra 0.153.0, gpt-6-sol and gpt-6-luna 0.155.0,
+# gpt-5.6-luna 0.144.0.
+supported = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra", "gpt-5.6-luna"]
+
+[models.default]
+study_plan = "gpt-6-luna"
+weekly_explanation = "gpt-6-luna"
+weekly_note = "gpt-6-luna"
+course_calendar = "gpt-6-luna"
+
+# Used once after `model_not_found` for the default, so a retirement doesn't stop mode A until
+# the next release.
+[models.fallback]
+study_plan = "gpt-5.6-luna"
+weekly_explanation = "gpt-5.6-luna"
+weekly_note = "gpt-5.6-luna"
+course_calendar = "gpt-5.6-luna"
+
+# One zstd-compressed binary per target (not the `codex-package-*` archives: with tools off,
+# `rg` and the code-mode host aren't needed). The asset is chosen by the running OS and CPU.
+#
+# Checked on 2026-09-29 (backend, with the owner's permission; the downloads were deleted
+# afterwards). Every file matched its `sha256`, and the pure-Rust zstd decoder unpacked the
+# aarch64 macOS and x86_64 Windows files byte for byte like `unzstd`. Signatures, which
+# `runtime.rs` requires:
+# - both macOS binaries: "Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2)", hardened
+#   runtime, timestamped; they pass `codesign --verify --strict` with the requirement
+#   `anchor apple generic and certificate leaf[subject.OU] = "2DC432GLL2"`;
+# - both Windows binaries: Authenticode, signer "OpenAI OpCo, LLC", issued by "Microsoft ID
+#   Verified CS AOC CA 03" (Microsoft ID Verified Code Signing PCA 2021 → Microsoft Identity
+#   Verification Root CA 2020);
+# - Linux: unsigned (the SHA-256 is the check).
+# Unpacked sizes: 240 MB (macOS arm64), 258 MB (macOS x64), 324 MB (Windows x64).
+# A bump re-checks them: see the ignored tests in `src/codex/runtime.rs`.
+[[asset]]
+target = "aarch64-apple-darwin"
+name = "codex-aarch64-apple-darwin.zst"
+size = 67859340
+sha256 = "6b4b7bf8c3e00ec1dc37b0dd6bc9a106e4626520eb64d3a6d3da4b8b185f32c1"
+
+[[asset]]
+target = "x86_64-apple-darwin"
+name = "codex-x86_64-apple-darwin.zst"
+size = 74631887
+sha256 = "eea063a531c72b7758c372128014b41e933f529a83c04d92fa0564afd2cbcbc9"
+
+[[asset]]
+target = "x86_64-pc-windows-msvc"
+name = "codex-x86_64-pc-windows-msvc.exe.zst"
+size = 79543933
+sha256 = "48fb8ff8e3d0e5764b1362026470515ae8aa0496c7fb13fccd998c602af856a8"
+
+# Windows on Arm (x64 PageLamp under emulation) gets the native binary; untested (D14).
+[[asset]]
+target = "aarch64-pc-windows-msvc"
+name = "codex-aarch64-pc-windows-msvc.exe.zst"
+size = 73466981
+sha256 = "7638f194bb6d72e5cd6ad1a9ad94e4364a42d4ce79191e98a6e293a5c9ed322e"
+
+[[asset]]
+target = "x86_64-unknown-linux-musl"
+name = "codex-x86_64-unknown-linux-musl.zst"
+size = 77122585
+sha256 = "e9afac3a400f85288d8e0fdb76e6bb9239ad826d040356516a2c14ff101918dd"

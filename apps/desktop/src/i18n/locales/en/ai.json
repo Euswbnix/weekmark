@@ -39,7 +39,9 @@
       "key_missing": "The key is missing from your keychain. Replace it to use this service again.",
       "server_not_running": "The model server isn't running.",
       "model_missing": "A model you chose is no longer offered. Choose another below.",
-      "disclosure_changed": "What this service receives has changed since you last read it."
+      "disclosure_changed": "What this service receives has changed since you last read it.",
+      "not_signed_in": "Codex isn't signed in to ChatGPT. Sign in to use your plan.",
+      "runtime_missing": "Codex isn't installed. Download it to use your ChatGPT plan."
     },
     "keyEnds": "Key ending in {{last4}}",
     "turnOn": "Review and turn on",
@@ -111,7 +113,8 @@
     },
     "admin": {
       "heading": "Who else can see it",
-      "body": "If your account belongs to a school or an employer, its administrators may be able to see what's sent."
+      "yes": "Your account is a school or workspace account: its administrators can see what PageLamp sends through it, including text from your course materials.",
+      "unknown": "If your ChatGPT account is an Edu or workspace account, its administrators may be able to see what PageLamp sends through it, including text from your course materials."
     },
     "cost": {
       "heading": "Cost",
@@ -214,7 +217,8 @@
     "button": "Remove all AI data",
     "hint": "Deletes your keys, model choices, usage history and everything {{product}} wrote with AI.",
     "title": "Remove all AI data?",
-    "body": "This deletes your API keys from the keychain, your model choices, the usage history, the AI settings, and every plan and explanation {{product}} wrote, and signs {{product}}'s Codex out of ChatGPT. Your courses, their rules and your answers about sharing materials stay.",
+    "body": "This deletes your API keys from the keychain, your model choices, the usage history, the AI settings, and everything {{product}} wrote with AI. Your courses, their rules and your answers about sharing materials stay.",
+    "bodyCodex": "This deletes your API keys from the keychain, your model choices, the usage history, the AI settings, and everything {{product}} wrote with AI, and signs {{product}}'s Codex out of ChatGPT. Your courses, their rules and your answers about sharing materials stay.",
     "confirm": "Remove all",
     "done": "All AI data removed"
   },
@@ -351,6 +355,7 @@
       "enterprise": "Enterprise"
     },
     "adminWarning": "This is a school or company workspace: its administrators can see what PageLamp sends through it, including text from your course materials.",
+    "adminUnknown": "If this is an Edu or workspace account, its administrators may be able to see what PageLamp sends through it.",
     "apiKeyWarning": "Codex is signed in with an API key, so runs are billed to that key, not to your ChatGPT plan. Sign out and sign in with ChatGPT to use your plan.",
     "noExec": "Your ChatGPT plan doesn't let other apps run Codex. You can still use an API key, a model on this computer, or your own AI app.",
     "noExecConnect": "Connect your AI app",

@@ -289,7 +289,7 @@ function KeyFormError({ form }: { form: KeyForm }) {
         {error.message ? (
           <AlertDescription>
             <p>{t("addKey.vendorSays")}</p>
-            <blockquote lang="en" className="border-l-2 pl-3 italic">
+            <blockquote lang="en" className="border-l-2 border-rule pl-3 italic">
               {error.message}
             </blockquote>
           </AlertDescription>

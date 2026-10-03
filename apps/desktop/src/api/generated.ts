@@ -6,7 +6,12 @@
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
  * via the `definition` "ActivityKind".
  */
-export type ActivityKind = "sync" | "download";
+export type ActivityKind = "sync" | "download" | "codex_install";
+/**
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "AdminVisibility".
+ */
+export type AdminVisibility = "no" | "unknown" | "yes";
 /**
  * Which backend a choice or an acknowledgement is about.
  *
@@ -81,7 +86,12 @@ export type BackendKind = "api_key" | "local" | "codex" | "claude_code";
  * via the `definition` "BackendProblem".
  */
 export type BackendProblem =
-  "key_missing" | "server_not_running" | "model_missing" | "disclosure_changed";
+  | "key_missing"
+  | "server_not_running"
+  | "model_missing"
+  | "disclosure_changed"
+  | "not_signed_in"
+  | "runtime_missing";
 /**
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
  * via the `definition` "BackendState".
@@ -390,6 +400,44 @@ export type CalendarOrigin = ("scan" | "ai" | "ai_app" | "restored") | "user" | 
 export type CoursePhase =
   "ended" | "not_started" | "teaching" | "break" | "exam_period" | "unknown";
 /**
+ * The ChatGPT plan, when known (`codex login status` doesn't say; `unknown` until it can be
+ * told).
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "ChatGptPlanType".
+ */
+export type ChatGptPlanType =
+  "free" | "go" | "plus" | "pro" | "business" | "edu" | "enterprise" | "unknown";
+/**
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "CodexLoginState".
+ */
+export type CodexLoginState = "signed_out" | "chatgpt" | "api_key";
+/**
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "CodexLoginMethod".
+ */
+export type CodexLoginMethod = "browser" | "device_code";
+/**
+ * What a `runtime_outdated` error means right now (the facade decides).
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "CodexOutdatedAction".
+ */
+export type CodexOutdatedAction = "none" | "install_pin" | "update_pagelamp";
+/**
+ * Which Codex PageLamp runs.
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "CodexSource".
+ */
+export type CodexSource = "managed" | "system";
+/**
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "CodexRuntimeState".
+ */
+export type CodexRuntimeState = ("not_installed" | "installed") | "unsupported_platform";
+/**
  * How a usage row's cost is known (the UIs label it: "≈ $x", "Free", "price unknown", "your
  * plan").
  *
@@ -632,6 +680,29 @@ export type EvidenceSignal = ("module_unlock" | "recent_materials" | "latest_mat
  */
 export type LeftOutReason = ("external_link" | "no_text") | "looks_like_assessment" | "over_budget";
 /**
+ * `codex_login` progress.
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "LoginEvent".
+ */
+export type LoginEvent =
+  | {
+      type: "browser_opened";
+      url?: string | null;
+    }
+  | {
+      expires_in_secs?: number | null;
+      type: "device_code";
+      user_code: string;
+      verification_url: string;
+    }
+  | {
+      type: "waiting";
+    }
+  | {
+      type: "done";
+    };
+/**
  * The student's answer to "May this course's materials be shared with an AI service?"
  * (design §4.1, question (b); `courses.material_sharing`, schema v4). Only `not_allowed` stops
  * material text from going to a cloud backend (owner decision D37, option 2).
@@ -710,6 +781,32 @@ export type TombstoneState = "pending" | "purged" | "restoring";
  * via the `definition` "RestoreFailure".
  */
 export type RestoreFailure = ("offline" | "other") | "not_listed" | "access_restricted";
+/**
+ * `install_codex` progress. A failure or cancel ends the call with an error.
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "RuntimeEvent".
+ */
+export type RuntimeEvent =
+  | {
+      total_bytes: number;
+      type: "download_started";
+    }
+  | {
+      downloaded_bytes: number;
+      total_bytes: number;
+      type: "progress";
+    }
+  | {
+      type: "verifying";
+    }
+  | {
+      type: "installing";
+    }
+  | {
+      type: "done";
+      version: string;
+    };
 /**
  * The answer to a removal suggestion.
  *
@@ -826,6 +923,7 @@ export interface PageLampAppTypes {
   activity: Activity;
   activity_item: ActivityItem;
   activity_kind: ActivityKind;
+  admin_visibility: AdminVisibility;
   ai_backend_status: AiBackendStatus;
   ai_feature: AiFeature;
   ai_materials_state: AiMaterialsState;
@@ -843,6 +941,15 @@ export interface PageLampAppTypes {
   calendar_candidate: CalendarCandidate;
   calendar_proposal: CalendarProposal;
   calendar_run_outcome: CalendarRunOutcome;
+  chat_gpt_plan_type: ChatGptPlanType;
+  codex_login: CodexLogin;
+  codex_login_method: CodexLoginMethod;
+  codex_login_state: CodexLoginState;
+  codex_outdated_action: CodexOutdatedAction;
+  codex_runtime: CodexRuntime;
+  codex_runtime_state: CodexRuntimeState;
+  codex_source: CodexSource;
+  codex_status: CodexStatus;
   cost_basis: CostBasis;
   cost_estimate: CostEstimate;
   cost_kind: CostKind;
@@ -870,8 +977,10 @@ export interface PageLampAppTypes {
   lifecycle_summary: LifecycleSummary;
   local_server: LocalServer;
   local_server_kind: LocalServerKind;
+  login_event: LoginEvent;
   material_sharing: MaterialSharing;
   mcp_client_config: McpClientConfig;
+  mode_a_usage: ModeAUsage;
   model_choice: ModelChoice;
   model_error_kind: ModelErrorKind;
   model_info: ModelInfo;
@@ -889,6 +998,7 @@ export interface PageLampAppTypes {
   remove_options: RemoveOptions;
   restore_outcome: RestoreOutcome;
   retention_fact: RetentionFact;
+  runtime_event: RuntimeEvent;
   search_hit: SearchHit;
   sent_data: SentData;
   snooze_kind: SnoozeKind;
@@ -902,6 +1012,7 @@ export interface PageLampAppTypes {
   sync_event: SyncEvent;
   sync_request: SyncRequest;
   sync_summary: SyncSummary;
+  system_codex: SystemCodex;
   term_source: TermSource;
   text_error_kind: TextErrorKind;
   token_usage: TokenUsage;
@@ -969,9 +1080,10 @@ export interface AiBackendStatus {
  */
 export interface DisclosureFacts {
   /**
-   * A school or company administrator can see the use (Edu/Enterprise plans).
+   * Whether a school or company administrator can see what is sent (Edu, Enterprise and
+   * Business workspaces). `unknown` while the plan type isn't known: never understated.
    */
-  admin_visibility: boolean;
+  admin_visibility: "no" | "unknown" | "yes";
   cost: CostKind;
   /**
    * Under 18 needs a parent's or guardian's permission.
@@ -1012,6 +1124,11 @@ export interface AiStatus {
    */
   backends: AiBackendStatus[];
   budget: BudgetStatus;
+  /**
+   * This build offers the ChatGPT plan (`CHATGPT_PLAN_OFFERED`). False: no Codex backend is
+   * listed, and the UIs hide the ChatGPT card and every ChatGPT copy.
+   */
+  chatgpt_plan_offered: boolean;
   features: FeatureRouting[];
   providers: ModelProviderRecord[];
 }
@@ -1488,6 +1605,71 @@ export interface ProposedDate {
 export interface DropCount {
   count: number;
   reason: DropReason;
+}
+/**
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "CodexLogin".
+ */
+export interface CodexLogin {
+  plan_type?: ChatGptPlanType | null;
+  state: CodexLoginState;
+}
+/**
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "CodexRuntime".
+ */
+export interface CodexRuntime {
+  /**
+   * The compressed download (for "≈70–80 MB").
+   */
+  download_bytes: number;
+  /**
+   * The version that runs (the managed one, or the system one when chosen).
+   */
+  installed_version?: string | null;
+  pinned_version: string;
+  source: CodexSource;
+  state: CodexRuntimeState;
+  /**
+   * Windows on Arm: runs, but untested (D14).
+   */
+  untested_platform: boolean;
+}
+/**
+ * The ChatGPT-plan card.
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "CodexStatus".
+ */
+export interface CodexStatus {
+  /**
+   * This build offers the ChatGPT plan (`CHATGPT_PLAN_OFFERED`). False: hide the ChatGPT card
+   * and every ChatGPT copy; the rest of this status is only for clean-up.
+   */
+  chatgpt_plan_offered: boolean;
+  /**
+   * False when `codex exec` doesn't work on this plan (Free/Go, D10); `None` until known.
+   */
+  exec_available?: boolean | null;
+  login: CodexLogin;
+  outdated_action: CodexOutdatedAction;
+  runs_this_week: number;
+  runtime: CodexRuntime;
+  system_codex?: SystemCodex | null;
+  /**
+   * Mode A's weekly run cap (`None`: no cap).
+   */
+  weekly_cap?: number | null;
+}
+/**
+ * A `codex` found on this computer (D12).
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "SystemCodex".
+ */
+export interface SystemCodex {
+  in_tested_range: boolean;
+  version: string;
 }
 /**
  * "≈ $x" before Generate: an upper bound.
@@ -2343,6 +2525,19 @@ export interface McpLaunch {
   temporary_location?: TemporaryLocation | null;
 }
 /**
+ * Mode A has no money budget: a weekly run cap instead (design §2.3).
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "ModeAUsage".
+ */
+export interface ModeAUsage {
+  runs_this_week: number;
+  /**
+   * `None`: no cap.
+   */
+  weekly_cap?: number | null;
+}
+/**
  * A model a backend offers.
  *
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
@@ -2408,9 +2603,10 @@ export interface ProviderPreset {
  */
 export interface DisclosureFacts1 {
   /**
-   * A school or company administrator can see the use (Edu/Enterprise plans).
+   * Whether a school or company administrator can see what is sent (Edu, Enterprise and
+   * Business workspaces). `unknown` while the plan type isn't known: never understated.
    */
-  admin_visibility: boolean;
+  admin_visibility: "no" | "unknown" | "yes";
   cost: CostKind;
   /**
    * Under 18 needs a parent's or guardian's permission.
@@ -2864,6 +3060,10 @@ export interface UsageRow {
  */
 export interface UsageSummary {
   budget: BudgetStatus;
+  /**
+   * The ChatGPT plan's runs this week and its cap, once the plan is set up or chosen.
+   */
+  mode_a?: ModeAUsage | null;
   /**
    * The first day of the month.
    */
