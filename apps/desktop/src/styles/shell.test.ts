@@ -57,6 +57,36 @@ describe("shell.css", () => {
   });
 });
 
+describe("floating surfaces (popovers, menus, selects, dialogs)", () => {
+  const components = [
+    "src/components/ui/popover.tsx",
+    "src/components/ui/select.tsx",
+    "src/components/ui/dropdown-menu.tsx",
+    "src/components/ui/dialog.tsx",
+    "src/components/ui/alert-dialog.tsx",
+  ];
+
+  it("are glass that floats", () => {
+    for (const file of components) expect(read(file)).toContain("pl-glass pl-float");
+  });
+
+  it("are opaque on Linux and on Windows without Mica, and over an open dialog", () => {
+    const opaque = block(
+      shell,
+      /:root:not\(\[data-platform="macos"\]\):not\(\[data-backdrop="mica"\]\) \.pl-float,[^{]*\{[^}]*\}/,
+    );
+    expect(opaque).toContain(':root:has([data-slot="dialog-content"]');
+    expect(opaque).toContain("backdrop-filter: none");
+    expect(opaque).toContain("background: var(--pl-color-surface-popover)");
+  });
+
+  it("keep dialogs fixed in the window (.pl-glass sets position: relative)", () => {
+    expect(block(shell, /\.pl-float:is\(\[data-slot="dialog-content"\][^{]*\{[^}]*\}/)).toContain(
+      "position: fixed",
+    );
+  });
+});
+
 describe("dialogs", () => {
   it("never blur the window behind them (§8: no animated blur; transparency settings)", () => {
     for (const file of ["src/components/ui/dialog.tsx", "src/components/ui/alert-dialog.tsx"]) {

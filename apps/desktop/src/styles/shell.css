@@ -198,3 +198,26 @@
     animation-duration: var(--pl-motion-reduced-duration);
   }
 }
+
+/* Floating surfaces (§8: "accessory bar, dialogs, popovers: .pl-glass"): popovers, menus, selects
+   and dialogs carry .pl-glass .pl-float. They are see-through where that is cheap and right:
+   macOS, and Windows 11 with Mica (whose near-opaque glass tint tokens.css sets). Elsewhere —
+   Linux (WebKitGTK), Windows 10 and 21H2 — they are opaque popover paper. glass.css already makes
+   every .pl-glass opaque with reduced transparency or increased contrast. */
+.pl-float:is([data-slot="dialog-content"], [data-slot="alert-dialog-content"]) {
+  /* .pl-glass sets position: relative; dialogs are fixed in the middle of the window. */
+  position: fixed;
+}
+:root:not([data-platform="macos"]):not([data-backdrop="mica"]) .pl-float,
+/* At most three glass surfaces (§1.3): a menu or popover over an open dialog is opaque. */
+:root:has([data-slot="dialog-content"], [data-slot="alert-dialog-content"])
+.pl-float:not([data-slot="dialog-content"], [data-slot="alert-dialog-content"]) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--pl-color-surface-popover);
+}
+:root:not([data-platform="macos"]):not([data-backdrop="mica"]) .pl-float::before,
+:root:has([data-slot="dialog-content"], [data-slot="alert-dialog-content"])
+  .pl-float:not([data-slot="dialog-content"], [data-slot="alert-dialog-content"])::before {
+  display: none;
+}

@@ -163,6 +163,9 @@ function INPUT_INK(ctx: Ctx, t: (name: string) => string): Rgba {
   return [ink[0], ink[1], ink[2], 0.5];
 }
 
+/** The dialog overlay (ui/dialog.tsx, alert-dialog.tsx: bg-black/10). */
+const DIM: Rgba = [0, 0, 0, 0.1];
+
 /** Mica approximations used by the spec's measurements (§8): #F3F3F3 / #202020. */
 const MICA = { light: parse("#f3f3f3"), dark: parse("#202020") };
 
@@ -216,6 +219,8 @@ describe("Lamplight token contrast (WCAG AA)", () => {
       raised,
       popover: parse(t("pl-color-surface-popover")),
       glass: over(parse(t("pl-color-glass-tint")), content),
+      // A glass dialog over the dialog overlay (black 10 %) over the page.
+      "dialog glass over dim": over(parse(t("pl-color-glass-tint")), over(DIM, content)),
       "hover on content": wash(content),
       "hover on raised": wash(raised),
       "selected row on content": wash(content, 0.09),
@@ -225,6 +230,10 @@ describe("Lamplight token contrast (WCAG AA)", () => {
       surfaces["mica card"] = card;
       // Callouts on Mica are a 5 % ink wash (content.css), hovers another 5 % on top.
       surfaces["mica callout"] = wash(card);
+      surfaces["dialog glass over dim mica"] = over(
+        parse(t("pl-color-glass-tint")),
+        over(DIM, card),
+      );
       surfaces["hover on mica callout"] = wash(wash(card));
     }
     // index.css: error text is the danger colour mixed a quarter of the way to ink.

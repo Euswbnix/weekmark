@@ -86,6 +86,19 @@ const SCREENS = {
     scenario: "demo",
     act: `document.querySelector("main").scrollTop = 320; await wait(400);`,
   },
+  // Floating surfaces: an open dialog, an open select (dropdown), and (sync-details) a popover.
+  dialog: {
+    hash: "#/sources",
+    scenario: "demo",
+    act: `[...document.querySelectorAll(".pl-toolbar button")].at(0).click(); await wait(600);`,
+  },
+  dropdown: {
+    hash: "#/settings",
+    scenario: "demo",
+    act: `const trigger = document.querySelector('[data-slot="select-trigger"]');
+  trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }));
+  trigger.click(); await wait(600);`,
+  },
   // The accessory bar mid-sync, and its details.
   syncing: { hash: "#/courses", scenario: "demo", act: startSync },
   "sync-details": { hash: "#/courses", scenario: "demo", act: `${startSync}\n${openCapsule}` },
