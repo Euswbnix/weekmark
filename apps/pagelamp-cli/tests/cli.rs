@@ -905,3 +905,131 @@ fn courses_are_grouped_by_lifecycle_with_timeline_and_keep() {
     );
     assert!(!conflict.status.success());
 }
+
+/// A refused command: it fails, prints nothing on stdout, and says why on stderr.
+fn refused(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(!output.status.success(), "should fail: {stderr}");
+    assert!(
+        output.stdout.is_empty(),
+        "nothing on stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    stderr
+}
+
+/// Removing courses shows what goes, then asks (design §7.13); so does purging. A test has no
+/// terminal, so without --yes nothing changes; --dry-run never asks; --yes neither shows nor
+/// asks.
+#[test]
+fn removing_and_purging_courses_ask_first() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let courses = temp.path().join("Courses");
+    demo_courses(&courses);
+    ok(&pagelamp(
+        &home,
+        &["folder", "add", courses.to_str().unwrap()],
+    ));
+    ok(&pagelamp(&home, &["sync"]));
+    let removed = || json_out(&pagelamp(&home, &["--json", "course", "removed"]));
+
+    // --dry-run only shows, even with --now.
+    let preview = ok(&pagelamp(
+        &home,
+        &["course", "remove", "DEMO101", "--now", "--dry-run"],
+    ));
+    assert!(preview.contains("DEMO101 — 2 materials"), "{preview}");
+    assert!(preview.contains("Your folder isn't changed"), "{preview}");
+
+    // Without --yes: the preview, then the refusal, on stderr; nothing removed.
+    for args in [
+        &["course", "remove", "DEMO101"][..],
+        &["course", "remove", "DEMO101", "--now"],
+        &["--json", "course", "remove", "DEMO101", "--now"],
+    ] {
+        let stderr = refused(&pagelamp(&home, args));
+        assert!(
+            stderr.contains("DEMO101 — 2 materials"),
+            "{args:?}: {stderr}"
+        );
+        assert!(
+            stderr.contains("run again with --yes"),
+            "{args:?}: {stderr}"
+        );
+    }
+    assert_eq!(removed(), json!([]));
+    assert!(ok(&pagelamp(&home, &["courses"])).contains("DEMO101"));
+    // An unknown course fails before anything is shown or asked.
+    let unknown = refused(&pagelamp(&home, &["course", "remove", "NOPE999"]));
+    assert!(!unknown.contains("--yes"), "{unknown}");
+
+    // --yes: removed at once, without asking; undoable for 7 days. A name names the course the
+    // preview showed (after the question the shown id is what's removed).
+    let shown = json_out(&pagelamp(
+        &home,
+        &[
+            "--json",
+            "course",
+            "remove",
+            "Advanced Demo Studies",
+            "--dry-run",
+        ],
+    ));
+    let report = json_out(&pagelamp(
+        &home,
+        &[
+            "--json",
+            "course",
+            "remove",
+            "Advanced Demo Studies",
+            "--yes",
+        ],
+    ));
+    assert_eq!(
+        report["removed"][0]["course_id"],
+        shown["items"][0]["course_id"]
+    );
+    assert_eq!(report["purged_now"], false);
+    let id = report["removed"][0]["removed_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(removed()[0]["state"], "pending");
+
+    // Purging it asks too: refused without --yes, still pending.
+    let stderr = refused(&pagelamp(&home, &["course", "purge", &id]));
+    assert!(
+        stderr.contains("DEMO202 — its local data is deleted now"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("run again with --yes"), "{stderr}");
+    assert_eq!(removed()[0]["state"], "pending");
+    // Nothing due (its 7 days aren't over): nothing to ask about, nothing deleted.
+    assert!(ok(&pagelamp(&home, &["course", "purge"])).contains("Deleted 0 course(s)."));
+    assert_eq!(removed()[0]["state"], "pending");
+    // An unknown id fails before anything is asked.
+    let unknown = refused(&pagelamp(
+        &home,
+        &["course", "purge", "folder:nope/course/X"],
+    ));
+    assert!(unknown.contains("There is no removed course"), "{unknown}");
+    // --yes purges.
+    let purged = json_out(&pagelamp(
+        &home,
+        &["--json", "course", "purge", &id, "--yes"],
+    ));
+    assert_eq!(purged["purged"], json!([id]));
+    assert_eq!(removed()[0]["state"], "purged");
+    // Purged, with no downloaded files left (a folder course): a purge has nothing to do, so
+    // nothing is asked.
+    assert!(ok(&pagelamp(&home, &["course", "purge", &id])).contains("Deleted 0 course(s)."));
+
+    // remove --now --yes deletes at once; stdout holds only the JSON.
+    let now = json_out(&pagelamp(
+        &home,
+        &["--json", "course", "remove", "DEMO101", "--now", "--yes"],
+    ));
+    assert_eq!(now["purged_now"], true);
+    assert_eq!(now["removed"][0]["state"], "purged");
+}

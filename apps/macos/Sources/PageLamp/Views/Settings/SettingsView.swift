@@ -6,9 +6,12 @@
 import SwiftUI
 import PageLampModel
 
-/// The Settings tabs of M1 (Reminders is M3 and stays hidden until it ships).
+/// The Settings tabs. Reminders and AI (M3) show only where they're on (preview builds, until
+/// they ship).
 package enum SettingsTab: String, CaseIterable, Sendable {
     case general
+    case reminders
+    case ai
     case data
     case privacy
     case help
@@ -29,7 +32,19 @@ struct SettingsView: View {
         TabView {
             Tab(l10n("mac.settings.tabs.general"), systemImage: "gearshape") {
                 SettingsGeneralTab()
-                    .frame(width: PLSize.settingsWidth, height: 220)
+                    .frame(width: PLSize.settingsWidth, height: SettingsGeneralTab.height)
+            }
+            if model.reminderDelivery != nil {
+                Tab(l10n("mac.settings.tabs.reminders"), systemImage: "bell") {
+                    SettingsRemindersTab()
+                        .frame(width: PLSize.settingsWidth, height: 520)
+                }
+            }
+            if model.aiSettings {
+                Tab(l10n("mac.settings.tabs.ai"), systemImage: "sparkles") {
+                    SettingsAiTab()
+                        .frame(width: PLSize.settingsWidth, height: SettingsAiTab.height)
+                }
             }
             Tab(l10n("mac.settings.tabs.data"), systemImage: "internaldrive") {
                 SettingsDataTab(settings: settings)
@@ -78,12 +93,24 @@ package struct SettingsTabPage: View {
     let title: String
     let settings: SettingsModel?
 
+    /// Settings ▸ Reminders' loaded settings (snapshots).
+    let reminders: ReminderSettingsEditor?
+    /// Settings ▸ AI, loaded (snapshots).
+    let ai: AiSettingsModel?
     @State private var fallback = SettingsModel()
 
-    package init(tab: SettingsTab, title: String, settings: SettingsModel? = nil) {
+    package init(
+        tab: SettingsTab,
+        title: String,
+        settings: SettingsModel? = nil,
+        reminders: ReminderSettingsEditor? = nil,
+        ai: AiSettingsModel? = nil
+    ) {
         self.tab = tab
         self.title = title
         self.settings = settings
+        self.reminders = reminders
+        self.ai = ai
     }
 
     package var body: some View {
@@ -94,6 +121,8 @@ package struct SettingsTabPage: View {
                 .padding([.horizontal, .top], PLLayout.sheetInset)
             switch tab {
             case .general: SettingsGeneralTab()
+            case .reminders: SettingsRemindersTab(editor: reminders ?? ReminderSettingsEditor())
+            case .ai: SettingsAiTab(ai: ai)
             case .data: SettingsDataTab(settings: settings ?? fallback)
             case .privacy: SettingsPrivacyTab()
             case .help: SettingsHelpTab(settings: settings ?? fallback)

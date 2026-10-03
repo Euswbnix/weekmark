@@ -2,9 +2,15 @@
 // can be linked to directly. `replace` keeps them out of the back-button history.
 
 import { useSearchParams } from "react-router";
+import { AI_SETUP_ENABLED } from "@/lib/features";
 
-export const COURSE_TABS = ["week", "timeline", "deadlines", "policy", "settings"] as const;
-export type CourseTab = (typeof COURSE_TABS)[number];
+const ALL_TABS = ["week", "explain", "timeline", "deadlines", "policy", "settings"] as const;
+export type CourseTab = (typeof ALL_TABS)[number];
+
+/** The tabs shown: Explain (M3) only where the AI screens are built (AI_SETUP_ENABLED). */
+export const COURSE_TABS: readonly CourseTab[] = AI_SETUP_ENABLED
+  ? ALL_TABS
+  : ALL_TABS.filter((tab) => tab !== "explain");
 
 export function isCourseTab(value: unknown): value is CourseTab {
   return COURSE_TABS.includes(value as CourseTab);

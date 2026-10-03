@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use chrono::{SubsecRound, Utc};
 use pagelamp_app::ai::{
-    BackendProblem, BackendRef, BackendState, CostBasis, EstimateRequest, LocalServerKind,
-    ModelChoice, StructuredOutputTier,
+    BackendProblem, BackendRef, BackendState, CostBasis, EstimateRequest, ExplainOptions,
+    LocalServerKind, ModelChoice, OutputLanguage, StructuredOutputTier,
 };
 use pagelamp_app::{App, AppErrorKind};
 use pagelamp_core::ai::{
@@ -283,6 +283,162 @@ async fn status_asks_for_the_disclosure_then_is_ready() {
     );
 }
 
+/// A long week-3 material of DEMO101 that looks like an assessment: left out unless included.
+fn seed_quiz(app: &App) -> String {
+    let quiz = format!("{COURSE}/material/quiz");
+    let store = Store::open(&app.db_path()).unwrap();
+    store
+        .upsert_material(&MaterialUpsert {
+            id: quiz.clone(),
+            course_id: COURSE.into(),
+            module_id: None,
+            kind: MaterialKind::File,
+            title: "Quiz 3".into(),
+            url: None,
+            local_path: None,
+            mime: None,
+            published_at: None,
+            week_hint: Some(3),
+        })
+        .unwrap();
+    store
+        .set_text_state(&quiz, TextStatus::Ok, None, Some("quiz-hash"))
+        .unwrap();
+    store
+        .replace_chunks(
+            &quiz,
+            &[Chunk {
+                material_id: quiz.clone(),
+                ord: 0,
+                locator: None,
+                text: "Guard cells swell with water and open the pore. ".repeat(1_200),
+            }],
+        )
+        .unwrap();
+    quiz
+}
+
+/// The estimate prices the run's own prompt: its answer format and its answer-language line.
+/// On a model whose structured answers may need a second, repaired call, both charges count,
+/// so a budget just below the run's price (well above what a plain-text estimate came to)
+/// stops the estimate and the run alike, with the same include.
+#[tokio::test]
+async fn the_estimate_prices_the_run_s_answer_format() {
+    let temp = tempfile::tempdir().unwrap();
+    let (app, secrets) = app_in(temp.path());
+    seed_course(&app);
+    let quiz = seed_quiz(&app);
+    let backend = add_cloud_openai(&app, &secrets);
+    app.set_feature_model(
+        AiFeature::WeeklyExplanation,
+        Some(ModelChoice {
+            backend: backend.clone(),
+            model: "gpt-5.2-pro".into(),
+            effort: Effort::Lowest,
+        }),
+    )
+    .unwrap();
+    let version = app.ai_status().unwrap().backends[0].disclosure.version;
+    app.acknowledge_ai_disclosure(&backend, version).unwrap();
+    // The course's language: the language line the estimate assumes is the run's exactly.
+    app.set_ai_output_language(OutputLanguage::Course).unwrap();
+    let request = EstimateRequest::WeeklyExplanation {
+        course: "DEMO101".into(),
+        week: Some(3),
+        include: vec![quiz.clone()],
+    };
+
+    let estimate = app.estimate_generation(&request).unwrap();
+    assert_eq!(estimate.would_block, None);
+    assert!(estimate.repair_possible, "{estimate:?}");
+    let upper = estimate.micro_usd_upper.unwrap();
+    app.set_monthly_budget(Some(upper - 1)).unwrap();
+    let over = app.estimate_generation(&request).unwrap();
+    assert_eq!(over.would_block, Some(BlockReason::BudgetReached));
+    let err = app
+        .explain_week(
+            "DEMO101",
+            Some(3),
+            "explain-format",
+            ExplainOptions {
+                include: vec![quiz],
+                ..ExplainOptions::default()
+            },
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.blocked, Some(BlockReason::BudgetReached));
+}
+
+/// "Include it" is priced as the run sends it: an included assessment raises the estimate, and
+/// when it alone takes the run over the budget, the estimate and the run both say so.
+#[tokio::test]
+async fn the_estimate_prices_what_include_sends() {
+    let temp = tempfile::tempdir().unwrap();
+    let (app, secrets) = app_in(temp.path());
+    seed_course(&app);
+    let quiz = seed_quiz(&app);
+    let backend = add_cloud_openai(&app, &secrets);
+    app.set_feature_model(
+        AiFeature::WeeklyExplanation,
+        Some(ModelChoice {
+            backend: backend.clone(),
+            model: "gpt-6-luna".into(),
+            effort: Effort::Lowest,
+        }),
+    )
+    .unwrap();
+    let version = app.ai_status().unwrap().backends[0].disclosure.version;
+    app.acknowledge_ai_disclosure(&backend, version).unwrap();
+    let request = |include: Vec<String>| EstimateRequest::WeeklyExplanation {
+        course: "DEMO101".into(),
+        week: Some(3),
+        include,
+    };
+
+    let base = app.estimate_generation(&request(Vec::new())).unwrap();
+    let included = app
+        .estimate_generation(&request(vec![quiz.clone()]))
+        .unwrap();
+    assert_eq!((base.would_block, included.would_block), (None, None));
+    assert!(
+        included.input_tokens > base.input_tokens + 10_000,
+        "{base:?} {included:?}"
+    );
+    let (base_usd, included_usd) = (
+        base.micro_usd_upper.unwrap(),
+        included.micro_usd_upper.unwrap(),
+    );
+    assert!(included_usd > base_usd + 1, "{base:?} {included:?}");
+
+    // A budget the week fits in, but not with the quiz.
+    app.set_monthly_budget(Some((base_usd + included_usd) / 2))
+        .unwrap();
+    let base = app.estimate_generation(&request(Vec::new())).unwrap();
+    assert_eq!(base.would_block, None);
+    let over = app
+        .estimate_generation(&request(vec![quiz.clone()]))
+        .unwrap();
+    assert_eq!(over.would_block, Some(BlockReason::BudgetReached));
+    assert_eq!(over.micro_usd_upper, Some(included_usd));
+    // The run with the same include stops for the same reason, before anything is sent.
+    let err = app
+        .explain_week(
+            "DEMO101",
+            Some(3),
+            "explain-include",
+            ExplainOptions {
+                include: vec![quiz],
+                ..ExplainOptions::default()
+            },
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.blocked, Some(BlockReason::BudgetReached));
+}
+
 #[tokio::test]
 async fn the_estimate_says_what_would_block_a_run() {
     let temp = tempfile::tempdir().unwrap();
@@ -291,6 +447,7 @@ async fn the_estimate_says_what_would_block_a_run() {
     let request = EstimateRequest::WeeklyExplanation {
         course: "DEMO101".into(),
         week: Some(3),
+        include: Vec::new(),
     };
     let block = |app: &App| app.estimate_generation(&request).unwrap().would_block;
     assert_eq!(block(&app), Some(BlockReason::NoModelChosen));
@@ -422,6 +579,7 @@ async fn a_model_on_this_computer_still_gets_a_not_allowed_course_and_costs_noth
         .estimate_generation(&EstimateRequest::WeeklyExplanation {
             course: "DEMO101".into(),
             week: Some(3),
+            include: Vec::new(),
         })
         .unwrap();
     assert_eq!(estimate.would_block, None, "{estimate:?}");
@@ -632,6 +790,7 @@ async fn local_work_and_keyless_providers_never_touch_the_keychain() {
     let request = EstimateRequest::WeeklyExplanation {
         course: "DEMO101".into(),
         week: Some(3),
+        include: Vec::new(),
     };
     // Routing, acknowledgements and estimates are local, even for a provider with a key.
     for id in ["openai", "lm_studio"] {
@@ -804,8 +963,20 @@ async fn doctor_says_which_keys_are_there_and_which_local_servers_answer_but_nev
     );
     assert_eq!(check("ollama").reachable, Some(false));
     // Whether the usual Ollama and LM Studio ports answer depends on this computer.
-    let kinds: Vec<_> = doctor.ai.local_servers.iter().map(|s| s.kind).collect();
-    assert_eq!(kinds, [LocalServerKind::Ollama, LocalServerKind::LmStudio]);
+    let kinds: Vec<_> = doctor
+        .ai
+        .local_servers
+        .iter()
+        .map(|s| (s.kind, s.preset.as_str(), s.provider_id.as_deref()))
+        .collect();
+    // No provider ids in doctor, although both servers were added.
+    assert_eq!(
+        kinds,
+        [
+            (LocalServerKind::Ollama, "ollama", None),
+            (LocalServerKind::LmStudio, "lm_studio", None)
+        ]
+    );
 
     let report = app.diagnostic_report().unwrap();
     assert!(report.contains("- AI providers: "), "{report}");
@@ -820,5 +991,62 @@ async fn doctor_says_which_keys_are_there_and_which_local_servers_answer_but_nev
     }
     let json = serde_json::to_string(&doctor).unwrap();
     assert!(!json.contains("canary7731") && !json.contains(&format!(":{open_port}")));
+    assert!(!json.contains("lm_studio-1") && !json.contains("ollama-1"));
     drop(listening);
+}
+
+#[tokio::test]
+async fn a_local_server_names_its_preset_and_the_provider_already_added_for_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let (app, _secrets) = app_in(temp.path());
+    let store = Store::open(&app.db_path()).unwrap();
+    for (id, preset, wire, url) in [
+        // Ollama at its usual address, written another way.
+        (
+            "ollama-1",
+            "ollama",
+            "ollama_native",
+            "http://localhost:11434/",
+        ),
+        // LM Studio on another port: not the server at the usual one.
+        (
+            "lm_studio-1",
+            "lm_studio",
+            "openai_chat",
+            "http://127.0.0.1:1235/v1",
+        ),
+        // Another preset at LM Studio's usual address isn't LM Studio.
+        (
+            "custom-1",
+            "custom",
+            "openai_chat",
+            "http://127.0.0.1:1234/v1",
+        ),
+    ] {
+        store
+            .insert_model_provider(&ProviderRow {
+                id: id.into(),
+                preset: preset.into(),
+                label: id.into(),
+                wire: wire.into(),
+                base_url: url.into(),
+                created_at: Utc::now().trunc_subsecs(0),
+                last_probe_json: None,
+            })
+            .unwrap();
+    }
+
+    // Whether the usual ports answer depends on this computer; what was added doesn't.
+    let servers = app.detect_local_servers().await.unwrap();
+    let found: Vec<_> = servers
+        .iter()
+        .map(|s| (s.kind, s.preset.as_str(), s.provider_id.as_deref()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (LocalServerKind::Ollama, "ollama", Some("ollama-1")),
+            (LocalServerKind::LmStudio, "lm_studio", None)
+        ]
+    );
 }

@@ -63,7 +63,8 @@ mod builders;
 
 pub(crate) use builders::looks_like_assessment;
 pub use builders::{
-    ContextBudget, GateError, PlanScope, calendar_context, note_context, plan_context, week_context,
+    ContextBudget, GateError, PlanScope, calendar_context, note_context, plan_context,
+    week_changed, week_context, week_context_including,
 };
 
 use schemars::JsonSchema;
@@ -106,11 +107,43 @@ pub struct ContextCourse {
     pub text_included: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct LeftOutMaterial {
     pub material_id: String,
     pub title: String,
     pub reason: LeftOutReason,
+    /// The student may send it anyway (an explanation's `include`): only a material that
+    /// looks like an assessment (`LeftOutReason::includable`).
+    pub includable: bool,
+}
+
+impl LeftOutMaterial {
+    pub fn new(
+        material_id: impl Into<String>,
+        title: impl Into<String>,
+        reason: LeftOutReason,
+    ) -> Self {
+        Self {
+            material_id: material_id.into(),
+            title: title.into(),
+            reason,
+            includable: reason.includable(),
+        }
+    }
+}
+
+/// Read back (a kept explanation), `includable` follows today's rule, whatever was stored.
+impl<'de> Deserialize<'de> for LeftOutMaterial {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Stored {
+            material_id: String,
+            title: String,
+            reason: LeftOutReason,
+        }
+        let stored = Stored::deserialize(deserializer)?;
+        Ok(Self::new(stored.material_id, stored.title, stored.reason))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -122,6 +155,15 @@ pub enum LeftOutReason {
     NoText,
     /// No room left in the budget.
     OverBudget,
+}
+
+impl LeftOutReason {
+    /// Whether the student may send a material left out for this reason anyway: only one that
+    /// looks like an assessment (rule 4 is a guess from its title). No text, an external link and
+    /// the budget aren't the student's to lift.
+    pub fn includable(self) -> bool {
+        self == Self::LooksLikeAssessment
+    }
 }
 
 /// Where a citation handle (`c12`) points.
@@ -162,6 +204,11 @@ impl GatedContext {
             summary: ContextSummary::default(),
             manifest: ContextManifest::default(),
         }
+    }
+
+    /// Whether it holds no course data at all (nothing to write about).
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
     }
 
     pub fn summary(&self) -> &ContextSummary {
@@ -281,6 +328,31 @@ impl RenderedPrompt {
     }
 }
 
+/// The language an answer is written in (the output-language setting, design §4.3). A closed
+/// set: each value adds fixed wording to the instructions, so no free text reaches a prompt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnswerLanguage {
+    English,
+    SimplifiedChinese,
+    /// Whatever language the course materials use.
+    CourseLanguage,
+}
+
+impl AnswerLanguage {
+    fn instruction(self) -> &'static str {
+        match self {
+            AnswerLanguage::English => "Write your answer in English.",
+            AnswerLanguage::SimplifiedChinese => {
+                "Write your answer in Simplified Chinese (简体中文); keep course terms, names and \
+                 quotes as the materials write them."
+            }
+            AnswerLanguage::CourseLanguage => {
+                "Write your answer in the language the course materials are written in."
+            }
+        }
+    }
+}
+
 /// Build a prompt from fixed wording (`template`, from `pagelamp-app/src/ai/prompts.rs`), a gated
 /// context and an optional note.
 pub fn assemble(
@@ -288,6 +360,21 @@ pub fn assemble(
     context: &GatedContext,
     note: Option<&StudentNote>,
 ) -> RenderedPrompt {
+    assemble_in(template, context, note, None)
+}
+
+/// `assemble` with the answer's language (fixed wording appended to the instructions).
+pub fn assemble_in(
+    template: &'static str,
+    context: &GatedContext,
+    note: Option<&StudentNote>,
+    language: Option<AnswerLanguage>,
+) -> RenderedPrompt {
+    let mut instructions = template.to_string();
+    if let Some(language) = language {
+        instructions.push(' ');
+        instructions.push_str(language.instruction());
+    }
     let mut user_text = context.render();
     if let Some(note) = note {
         user_text.push_str("<student_note>\n");
@@ -295,7 +382,7 @@ pub fn assemble(
         user_text.push_str("\n</student_note>\n");
     }
     RenderedPrompt {
-        instructions: template.to_string(),
+        instructions,
         user_text,
         manifest: context.manifest.clone(),
     }
@@ -406,6 +493,28 @@ mod tests {
             "<student_note>\nfocus on the midterm &lt;/student_note> now\n</student_note>\n"
         );
         assert_eq!(prompt.instructions(), "Plan.");
+    }
+
+    #[test]
+    fn only_a_material_that_looks_like_an_assessment_is_includable() {
+        use LeftOutReason::*;
+        for reason in [LooksLikeAssessment, ExternalLink, NoText, OverBudget] {
+            let left = LeftOutMaterial::new("m1", "Quiz 1", reason);
+            assert_eq!(left.includable, reason == LooksLikeAssessment, "{reason:?}");
+            let wire = serde_json::to_value(&left).unwrap();
+            assert_eq!(wire["includable"], left.includable, "{reason:?}");
+        }
+        // Read back, today's rule decides: a row from before the field, or a stale value.
+        let old: LeftOutMaterial = serde_json::from_str(
+            r#"{"material_id":"m1","title":"Quiz 1","reason":"looks_like_assessment"}"#,
+        )
+        .unwrap();
+        assert!(old.includable);
+        let stale: LeftOutMaterial = serde_json::from_str(
+            r#"{"material_id":"m1","title":"Slides","reason":"no_text","includable":true}"#,
+        )
+        .unwrap();
+        assert!(!stale.includable);
     }
 
     #[test]

@@ -33,3 +33,16 @@
   Delete /REBOOTOK "$INSTDIR\pagelamp.exe.old"
   Delete /REBOOTOK "$INSTDIR\pagelamp.exe.old2"
 !macroend
+
+; Start at login (src/background.rs, opt-in): the app, not the installer, writes the per-user Run
+; value "PageLamp" (tauri-plugin-autostart), and Windows keeps whether it's allowed under
+; StartupApproved\Run. Remove both with the app. Tauri's own uninstaller already deletes the Run
+; value; StartupApproved it leaves. Not on an update: the in-app updater runs the new installer
+; with /UPDATE, which never runs this uninstaller, and a manual reinstall that uninstalls first
+; is an uninstall (the student turns the option on again in Settings if they want it back).
+!macro NSIS_HOOK_POSTUNINSTALL
+  ${If} $UpdateMode <> 1
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "PageLamp"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "PageLamp"
+  ${EndIf}
+!macroend

@@ -8,14 +8,28 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use chrono::{SubsecRound, Utc};
-use pagelamp_core::ai::ProviderRow;
+use pagelamp_app::App;
+use pagelamp_app::ai::{BackendRef, CodexSource, ModelChoice};
+use pagelamp_core::ai::{AiFeature, Effort, ProviderRow};
+use pagelamp_core::secrets::MemorySecrets;
 use pagelamp_core::store::Store;
 use serde_json::Value;
 
 /// Like `tests/cli.rs`: every location `pagelamp` could fall back to points into `home`.
 fn pagelamp(home: &Path, args: &[&str]) -> Output {
+    pagelamp_with_path(home, args, None)
+}
+
+/// `pagelamp` with `PATH` set to `path` when given.
+fn pagelamp_with_path(home: &Path, args: &[&str], path: Option<&Path>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pagelamp"));
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
     command.env("PAGELAMP_HOME", home);
     for var in [
         "HOME",
@@ -339,6 +353,12 @@ fn a_not_allowed_course_is_blocked_for_a_cloud_model_from_the_cli() {
     let body: Value = serde_json::from_str(&stdout(&output)).unwrap();
     assert_eq!(body["would_block"], "material_sharing_not_allowed");
     assert_eq!(body["input_tokens"], 0, "nothing would be sent");
+    // `explain` itself is refused before anything is sent (M3 DoD 1, the CLI entry point).
+    let refused = failed(&pagelamp(&home, &["explain", "DEMO101", "--week", "1"]));
+    assert!(
+        refused.contains("blocked: material_sharing_not_allowed"),
+        "{refused}"
+    );
     ok(&pagelamp(
         &home,
         &["course", "sharing", "DEMO101", "not-sure"],
@@ -346,9 +366,144 @@ fn a_not_allowed_course_is_blocked_for_a_cloud_model_from_the_cli() {
     ok(&pagelamp(&home, &estimate));
 }
 
+#[test]
+fn remind_is_quiet_until_something_is_due_and_plan_and_note_need_a_model() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    synced_demo_course(&home, &temp.path().join("Courses"));
+    // Nothing due (the digest's Monday reminder may be, so ask on a fresh week only when it
+    // isn't): `--digest` always prints the digest.
+    let digest = ok(&pagelamp(&home, &["remind", "--digest"]));
+    assert!(digest.contains("This week"), "{digest}");
+    assert!(digest.contains("DEMO101"), "{digest}");
+    let output = pagelamp(&home, &["--json", "remind", "--digest"]);
+    ok(&output);
+    let body = json_out(&output);
+    assert!(
+        body["due"].is_array() && body["digest"]["courses"].is_array(),
+        "{body}"
+    );
+    // Shown reminders don't come back.
+    let again = pagelamp(&home, &["--json", "remind"]);
+    ok(&again);
+    assert_eq!(json_out(&again)["due"], serde_json::json!([]));
+
+    let plan = failed(&pagelamp(&home, &["plan"]));
+    assert!(plan.contains("blocked: no_model_chosen"), "{plan}");
+    assert!(
+        ok(&pagelamp(&home, &["explain", "DEMO101", "--saved"])).contains("No saved explanations.")
+    );
+    let note = failed(&pagelamp(&home, &["note"]));
+    assert!(note.contains("blocked: no_model_chosen"), "{note}");
+    assert!(ok(&pagelamp(&home, &["note", "--saved"])).contains("No saved weekly notes."));
+}
+
+/// PageLamp runs the ChatGPT and Claude plans only when the student starts the run (plan
+/// D27): with no terminal (cron, a script; a spawned test has none), the model commands refuse
+/// them first, before any other check. A Codex on PATH that leaves a mark if anything starts it guards that
+/// nothing was run. An API key or a local model is not refused.
+#[test]
+fn plan_runs_without_a_terminal_are_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    synced_demo_course(&home, &temp.path().join("Courses"));
+    let choice = |backend| ModelChoice {
+        backend,
+        model: "plan-model".into(),
+        effort: Effort::Lowest,
+    };
+    let mut routing = BTreeMap::from([
+        (AiFeature::StudyPlan, choice(BackendRef::Codex)),
+        (AiFeature::WeeklyExplanation, choice(BackendRef::ClaudeCode)),
+        (AiFeature::WeeklyNote, choice(BackendRef::Codex)),
+        (AiFeature::CourseCalendar, choice(BackendRef::ClaudeCode)),
+    ]);
+    let store = Store::open(&home.join("pagelamp.db")).unwrap();
+    store.set_setting("ai.routing", &routing).unwrap();
+    // The student's own Codex on PATH, its disclosure read: the refusal is what stops the run.
+    store
+        .set_setting("ai.codex_source", &CodexSource::System)
+        .unwrap();
+    let app = App::open_at_with_secrets(home.clone(), Arc::new(MemorySecrets::new())).unwrap();
+    // The ChatGPT plan's build switch is off: acknowledging needs it on (in this process only;
+    // the spawned CLI refuses before it would matter).
+    app.set_chatgpt_plan_offered_for_tests(true);
+    let version = app
+        .ai_status()
+        .unwrap()
+        .backends
+        .iter()
+        .find(|b| b.backend == BackendRef::Codex)
+        .unwrap()
+        .disclosure
+        .version;
+    app.acknowledge_ai_disclosure(&BackendRef::Codex, version)
+        .unwrap();
+    let bin = temp.path().join("bin");
+    let path = cfg!(unix).then_some(bin.as_path());
+    std::fs::create_dir_all(&bin).unwrap();
+    let mark = temp.path().join("codex-ran");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let codex = bin.join("codex");
+        // Shell builtins only: PATH is just `bin`, so `touch` would never be found.
+        std::fs::write(
+            &codex,
+            format!("#!/bin/sh\necho \"$*\" >> '{}'\nexit 1\n", mark.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    for args in [
+        &["plan"][..],
+        &["explain", "DEMO101"],
+        &["note"],
+        &["course", "calendar", "DEMO101", "--read"],
+        &["--json", "note"],
+    ] {
+        let err = failed(&pagelamp_with_path(&home, args, path));
+        assert!(
+            err.contains("refused: unattended_plan_run"),
+            "{args:?}: {err}"
+        );
+        assert!(
+            err.contains(
+                "PageLamp runs the ChatGPT and Claude plans only when you start the run yourself."
+            ),
+            "{args:?}: {err}"
+        );
+        assert!(
+            err.contains(
+                "For scheduled runs (cron), choose an API key or a model on this computer"
+            ),
+            "{args:?}: {err}"
+        );
+    }
+    assert!(!mark.exists(), "no Codex was started");
+    // What runs no model is unaffected.
+    assert!(
+        ok(&pagelamp_with_path(&home, &["note", "--saved"], path))
+            .contains("No saved weekly notes.")
+    );
+
+    // An API key or a local model may run on a schedule (here the provider doesn't exist, so
+    // the run fails later, for that reason).
+    routing.insert(
+        AiFeature::WeeklyNote,
+        choice(BackendRef::Provider {
+            provider_id: "lm_studio".into(),
+        }),
+    );
+    store.set_setting("ai.routing", &routing).unwrap();
+    let err = failed(&pagelamp_with_path(&home, &["note"], path));
+    assert!(!err.contains("unattended_plan_run"), "{err}");
+}
+
 /// A build that doesn't offer the ChatGPT plan (`CHATGPT_PLAN_OFFERED`): `ai codex …` refuses
-/// with the facade's message before anything is printed or started (status and sign-out, which
-/// clean up, still work; they aren't run here because they would look for a `codex` on PATH).
+/// with the facade's message before anything is printed or started (status and sign-out still
+/// work: see the next test).
 #[test]
 fn codex_commands_refuse_when_the_plan_is_not_offered() {
     if pagelamp_app::ai::CHATGPT_PLAN_OFFERED {
@@ -361,6 +516,7 @@ fn codex_commands_refuse_when_the_plan_is_not_offered() {
         &["ai", "codex", "login"],
         &["ai", "codex", "use", "system"],
         &["ai", "codex", "cap", "5"],
+        &["ai", "use", "study-plan", "codex", "gpt-6-luna", "--yes"],
     ] {
         let output = pagelamp(&home, args);
         let err = failed(&output);
@@ -373,5 +529,142 @@ fn codex_commands_refuse_when_the_plan_is_not_offered() {
             "{args:?}: nothing printed first"
         );
         assert!(!err.contains("Downloading"), "{args:?}: {err}");
+    }
+}
+
+/// With the plan not offered, `ai codex status` says so and starts nothing: neither a Codex on
+/// PATH nor a managed one runs, and no Codex sign-in folder appears. Signing out is clean-up:
+/// with no sign-in folder nothing starts; with one, the Codex "Remove all AI data" would use
+/// signs out, and nothing else runs.
+#[cfg(unix)]
+#[test]
+fn codex_status_starts_nothing_when_the_plan_is_not_offered() {
+    use std::os::unix::fs::PermissionsExt;
+    if pagelamp_app::ai::CHATGPT_PLAN_OFFERED {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let bin = temp.path().join("bin");
+    let mark = temp.path().join("codex-ran");
+    // Codexes that note every start, with shell builtins only (PATH is just `bin`).
+    let fake = |dir: &Path, who: &str| {
+        std::fs::create_dir_all(dir).unwrap();
+        let codex = dir.join("codex");
+        std::fs::write(
+            &codex,
+            format!("#!/bin/sh\necho \"{who} $*\" >> '{}'\n", mark.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    fake(&bin, "path");
+    let started = || std::fs::read_to_string(&mark).unwrap_or_default();
+    let run = |args: &[&str]| pagelamp_with_path(&home, args, Some(&bin));
+
+    let text = ok(&run(&["ai", "codex", "status"]));
+    assert_eq!(
+        text.trim(),
+        "The ChatGPT plan isn't available in this version of PageLamp."
+    );
+    let status = json_out(&run(&["--json", "ai", "codex", "status"]));
+    assert_eq!(status["chatgpt_plan_offered"], false);
+    assert_eq!(status["system_codex"], Value::Null);
+    assert_eq!(status["login"]["state"], "signed_out");
+    assert_eq!(started(), "", "no Codex was started");
+    assert!(!home.join("codex-home").exists());
+
+    // A managed Codex as well: status still starts nothing, and with no sign-in folder neither
+    // does sign-out.
+    fake(
+        &home.join("runtimes").join("codex").join("0.1.0"),
+        "managed",
+    );
+    ok(&run(&["ai", "codex", "status"]));
+    ok(&run(&["ai", "codex", "logout"]));
+    assert_eq!(started(), "");
+    assert!(!home.join("codex-home").exists());
+
+    // A sign-in folder left by an earlier build: the managed Codex signs out, and only that.
+    std::fs::create_dir_all(home.join("codex-home")).unwrap();
+    let text = ok(&run(&["ai", "codex", "logout"]));
+    assert!(text.contains("isn't available"), "{text}");
+    assert_eq!(started(), "managed logout\n");
+}
+
+/// A home with no course and a model on this computer (never asked: nothing listens there)
+/// chosen for `feature`.
+fn home_with_local_model(feature: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    ok(&pagelamp(&home, &["ai"]));
+    Store::open(&home.join("pagelamp.db"))
+        .unwrap()
+        .insert_model_provider(&ProviderRow {
+            id: "local-llm".into(),
+            preset: "lm_studio".into(),
+            label: "Local LLM".into(),
+            wire: "openai_chat".into(),
+            base_url: "http://127.0.0.1:9/v1".into(),
+            created_at: Utc::now().trunc_subsecs(0),
+            last_probe_json: None,
+        })
+        .unwrap();
+    ok(&pagelamp(
+        &home,
+        &[
+            "ai",
+            "use",
+            feature,
+            "local-llm",
+            "local-model",
+            "--yes",
+            "--no-check",
+        ],
+    ));
+    (temp, home)
+}
+
+/// A week with nothing to write about: `ai estimate --feature weekly-note` and `note` both say
+/// so with the facade's code (exit 1), before anything is sent. The model is on this computer
+/// and is never asked.
+#[test]
+fn nothing_to_write_about_is_said_before_the_note_runs() {
+    let (_temp, home) = home_with_local_model("weekly-note");
+    for args in [
+        &["ai", "estimate", "--feature", "weekly-note"][..],
+        &["note"],
+    ] {
+        let output = pagelamp(&home, args);
+        let err = failed(&output);
+        assert!(
+            err.contains("blocked: nothing_to_write — there is nothing to write about this week"),
+            "{args:?}: {err}"
+        );
+        assert!(stdout(&output).is_empty(), "{args:?}: no estimate line");
+    }
+}
+
+/// No course to plan for: `ai estimate --feature study-plan` and `plan` both say so with the
+/// facade's code (exit 1), before anything is sent.
+#[test]
+fn no_course_to_plan_for_is_said_before_the_plan_runs() {
+    let (_temp, home) = home_with_local_model("study-plan");
+    for args in [
+        &["ai", "estimate", "--feature", "study-plan"][..],
+        &["plan"],
+    ] {
+        let output = pagelamp(&home, args);
+        let err = failed(&output);
+        assert!(
+            err.contains("blocked: no_course_to_plan — there is no active course to plan for"),
+            "{args:?}: {err}"
+        );
+        assert!(
+            err.contains("hidden courses are skipped") && err.contains("course show <course>"),
+            "{args:?}: {err}"
+        );
+        assert!(stdout(&output).is_empty(), "{args:?}: no estimate line");
     }
 }

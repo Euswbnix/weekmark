@@ -159,6 +159,18 @@ pub(crate) struct RunOutcome {
     /// The model that answered (Codex may fall back from a retired default).
     pub model: String,
     pub on_device: bool,
+    /// What it used and cost (`GenerationMeta`).
+    pub cost: RunCost,
+}
+
+/// A run's counts as the facade shows them, and its cost as its usage row has it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RunCost {
+    pub usage: TokenUsage,
+    /// micro-USD: 0 on this computer, `None` unpriced or on the ChatGPT plan.
+    pub micro_usd: Option<u64>,
+    /// The counts are estimates (the provider didn't report them).
+    pub estimated: bool,
 }
 
 /// How a run's cost is known, for its usage row.
@@ -303,7 +315,7 @@ impl App {
         let key = backend_key(&request.choice.backend);
         match result {
             Ok(outcome) => {
-                let usage = self.record_run_usage(
+                let cost = self.record_run_usage(
                     &key,
                     &model,
                     request.feature,
@@ -311,12 +323,13 @@ impl App {
                     billing,
                     "ok",
                 )?;
-                on_event(GenEvent::Usage { usage });
+                on_event(GenEvent::Usage { usage: cost.usage });
                 Ok(RunOutcome {
                     json: outcome.json,
                     backend_label,
                     model: outcome.model_reported.unwrap_or(model),
                     on_device,
+                    cost,
                 })
             }
             Err(LlmError::Cancelled) => {
@@ -349,7 +362,7 @@ impl App {
         }
     }
 
-    /// Write a run's `ai_usage` row and return its counts as the facade shows them.
+    /// Write a run's `ai_usage` row and return its counts and cost.
     pub(crate) fn record_run_usage(
         &self,
         backend: &str,
@@ -358,7 +371,7 @@ impl App {
         usage: Usage,
         billing: Billing<'_>,
         outcome: &str,
-    ) -> Result<TokenUsage> {
+    ) -> Result<RunCost> {
         let (micro_usd, cost_basis) = match billing {
             Billing::Priced(profile) => match usage_cost(profile, model, &usage) {
                 Some(cost) => (Some(cost), "priced"),
@@ -382,11 +395,15 @@ impl App {
             estimated: usage.estimated,
             outcome: outcome.to_string(),
         })?;
-        Ok(TokenUsage {
-            input_tokens: usage.input_uncached + usage.cache_read + usage.cache_write,
-            cached_input_tokens: usage.cache_read,
-            output_tokens: usage.output,
-            reasoning_tokens: usage.reasoning,
+        Ok(RunCost {
+            usage: TokenUsage {
+                input_tokens: usage.input_uncached + usage.cache_read + usage.cache_write,
+                cached_input_tokens: usage.cache_read,
+                output_tokens: usage.output,
+                reasoning_tokens: usage.reasoning,
+            },
+            micro_usd,
+            estimated: usage.estimated,
         })
     }
 }

@@ -6,6 +6,7 @@ import { createMockApi } from "@/api/mock";
 import { SOURCE_CANVAS } from "@/api/mock/fixtures";
 import { brand } from "@/brand";
 import i18n from "@/i18n";
+import { AI_SETUP_ENABLED } from "@/lib/features";
 import { paths } from "@/lib/routes";
 import { useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
@@ -263,8 +264,13 @@ describe("CoursesPage — study plan", () => {
     const doneRow = within(plan).getByText("Skim Week 4 slides").closest("li") as HTMLElement;
     expect(within(doneRow).getByText("Done")).toBeInTheDocument();
     expect(within(plan).getByText("Midterm review: weeks 1–2")).toBeInTheDocument();
-    // Read-only: no checkboxes.
-    expect(within(plan).queryByRole("checkbox")).toBeNull();
+    if (AI_SETUP_ENABLED) {
+      // M3: items are ticked off here, each checkbox named after its task.
+      expect(within(doneRow).getByRole("checkbox", { name: /Skim Week 4 slides$/ })).toBeChecked();
+    } else {
+      // Read-only: no checkboxes.
+      expect(within(plan).queryByRole("checkbox")).toBeNull();
+    }
   });
 
   it("flags a plan whose horizon has ended", async () => {

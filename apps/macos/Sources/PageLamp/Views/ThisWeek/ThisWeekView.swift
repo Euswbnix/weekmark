@@ -1,6 +1,6 @@
 // This Week (home) (spec §3.1, M1): the lamp band with today's date, the summary and Next up;
-// then the crash notice (S6), source problems (S7), Next 7 days, the study plan and the Contents
-// of the student's courses. S3/S4 (and the first sync) replace the page with an empty state
+// then the crash notice (S6), source problems (S7), Next 7 days, the weekly note (M3, preview
+// builds), the study plan and the Contents of the student's courses. S3/S4 (and the first sync) replace the page with an empty state
 // (spec §3.9). The day ribbon is M3.
 //
 // One tinted action per window, and This Week normally has none (spec §1.2): a failing source's
@@ -100,7 +100,11 @@ private struct ThisWeekDocument: View {
                 if !model.failingSources.isEmpty {
                     ThisWeekSourceProblems()
                 }
+                RemindersCatchUp()
                 Next7DaysSection(digest: digest, text: text)
+                if let note = model.weeklyNote {
+                    WeeklyNoteSection(note: note, now: now)
+                }
                 StudyPlanSection(text: text, expanded: planExpanded)
                 ContentsSection(text: text)
             }

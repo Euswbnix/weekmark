@@ -22,6 +22,7 @@ import type {
   CourseDatesInput,
   MaterialView,
   ProposedDate,
+  SyllabusOffer,
 } from "../types";
 import { aiMaterialsState } from "../types";
 import type { MockActivity } from "./activity";
@@ -37,6 +38,7 @@ type ProposalsApi = Pick<
   | "acceptPassingProposals"
   | "dismissCalendarProposal"
   | "syllabusReadingOffers"
+  | "snoozeCalendarOffers"
   | "readCourseCalendar"
   | "readCourseCalendars"
   | "cancelGeneration"
@@ -579,6 +581,45 @@ export function createProposalsMock(deps: {
     return outcomes;
   }
 
+  /** Every course the syllabus reading could be offered for (facade: all offers). */
+  function allOffers(): SyllabusOffer[] {
+    return db.courses
+      .filter((c) => {
+        const candidates = candidatesOf(c);
+        return (
+          c.lifecycle.group !== "past" &&
+          !stateOf(c.course.id).accepted &&
+          blockedOf(c, candidates) === null
+        );
+      })
+      .map((c) => {
+        const candidates = candidatesOf(c);
+        return {
+          course_id: c.course.id,
+          reason_code: "no_calendar",
+          candidates: candidates.length,
+          has_text: candidates.some((x) => x.has_text),
+        };
+      });
+  }
+
+  /** "Not now" on the offers: 14 days for the courses offered then (like the banner). */
+  let offersSnooze: { until: string; courses: string[] } | null = null;
+
+  /**
+   * The offers to show now: all of them while one isn't covered by an unexpired "Not now",
+   * else none (the rule the facade applies for syllabus_reading_offers and startup_tasks).
+   */
+  function offersNow(): SyllabusOffer[] {
+    const offers = allOffers();
+    const snooze = offersSnooze;
+    const quiet =
+      snooze !== null &&
+      snooze.until >= isoOf(now()) &&
+      offers.every((o) => snooze.courses.includes(o.course_id));
+    return quiet ? [] : offers;
+  }
+
   const api: Omit<ProposalsApi, keyof typeof runs> = {
     courseCalendar: (courseId) => respond(() => view(findCourse(courseId))),
 
@@ -625,30 +666,18 @@ export function createProposalsMock(deps: {
         sync(c);
       }),
 
-    syllabusReadingOffers: () =>
-      respond(() =>
-        db.courses
-          .filter((c) => {
-            const candidates = candidatesOf(c);
-            return (
-              c.lifecycle.group !== "past" &&
-              !stateOf(c.course.id).accepted &&
-              blockedOf(c, candidates) === null
-            );
-          })
-          .map((c) => {
-            const candidates = candidatesOf(c);
-            return {
-              course_id: c.course.id,
-              reason_code: "no_calendar",
-              candidates: candidates.length,
-              has_text: candidates.some((x) => x.has_text),
-            };
-          }),
-      ),
+    syllabusReadingOffers: () => respond(offersNow),
+
+    snoozeCalendarOffers: () =>
+      respond(() => {
+        offersSnooze = {
+          until: addDays(isoOf(now()), 14),
+          courses: allOffers().map((o) => o.course_id),
+        };
+      }),
   };
 
-  return { api: { ...api, ...runs } satisfies ProposalsApi };
+  return { api: { ...api, ...runs } satisfies ProposalsApi, offersNow };
 }
 
 /** "September 8" in English, as a syllabus would write it (quotes are the material's words). */

@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import {
@@ -24,8 +24,9 @@ import { useAiErrorText } from "./useAiErrorText";
 
 /**
  * Whether the cost line applies. No model and the gate's blocks (the course's rules, question
- * (b)) carry no estimate; the others (disclosure, unpriced model, weekly cap, budget) leave it
- * complete, and over the budget the student decides on the override with it.
+ * (b), a weekly note with nothing to write about) carry no estimate; the others (disclosure,
+ * unpriced model, weekly cap, budget) leave it complete, and over the budget the student decides
+ * on the override with it.
  */
 function showsCost(block: BlockReason | null): boolean {
   return (
@@ -51,11 +52,17 @@ export function GenerateButton({
   request,
   onGenerate,
   label,
+  describedBy,
+  variant,
 }: {
   /** null = the form isn't complete yet. */
   request: EstimateRequest | null;
   onGenerate: (options: { overrideBudget: boolean }) => void;
   label?: string;
+  /** An element saying why the form isn't ready (added to the button's description). */
+  describedBy?: string;
+  /** "outline" where another button on the screen is the main one (Plan's Write again). */
+  variant?: "default" | "outline";
 }) {
   const { t, i18n } = useTranslation("ai");
   const estimate = useCostEstimate(request);
@@ -66,16 +73,27 @@ export function GenerateButton({
 
   const data = estimate.data ?? null;
   const block = data?.would_block ?? null;
+  // The tick answers this block only: once an estimate arrives without it (the budget changed
+  // elsewhere), the tick goes, and a box that comes back isn't ticked already. A refetch keeps
+  // the estimate on screen, so the same block keeps the tick.
+  useEffect(() => {
+    if (block !== "budget_reached") setOverrideBudget(false);
+  }, [block]);
   const blocked = block !== null && !(block === "budget_reached" && overrideBudget);
-  const disabled = request === null || !data || blocked || estimate.isFetching;
+  // Not while the estimate on screen is still the previous request's; a refetch of the same
+  // request leaves the button as it is.
+  const disabled = request === null || !data || blocked || estimate.settling;
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-3">
         <Button
           type="button"
+          variant={variant}
           aria-disabled={disabled || undefined}
-          aria-describedby={block ? `${ids.line} ${ids.reason}` : ids.line}
+          aria-describedby={[block ? `${ids.line} ${ids.reason}` : ids.line, describedBy]
+            .filter(Boolean)
+            .join(" ")}
           className="aria-disabled:opacity-50"
           onClick={() => {
             if (!disabled) onGenerate({ overrideBudget: block === "budget_reached" });

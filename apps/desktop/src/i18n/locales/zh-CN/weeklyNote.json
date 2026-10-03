@@ -1,0 +1,57 @@
+{
+  "title": "每周笔记",
+  "empty": "根据课程结构和学习计划，用几句话概括你这一周，并列出最该关注的三件事。不会发送任何资料正文。",
+  "write": "写我的每周笔记",
+  "writeAgain": "重新写一份",
+  "weekOf": "适用于 {{date}} 这一周",
+  "automatic": "周一自动准备",
+  "earlierWeek": "这份笔记是之前某一周的。",
+  "regionLabel": "{{date}} 这一周的每周笔记",
+  "focusTitle": "本周重点",
+  "gradedLeftOut_one": "有 {{count}} 项重点看起来像是在替你完成计分作业，已略去。",
+  "gradedLeftOut_other": "有 {{count}} 项重点看起来像是在替你完成计分作业，已略去。",
+  "copy": "复制",
+  "delete": "删除…",
+  "deleteTitle": "删除这份笔记？",
+  "deleteBody": "笔记会从这台电脑上删除，无法撤销。",
+  "deleteConfirm": "删除",
+  "deleted": "笔记已删除。",
+  "deleteFailed": "无法删除这份笔记。",
+  "automaticProblem": "周一的笔记没能准备好：{{reason}}",
+  "history": {
+    "title": "之前的笔记",
+    "show": "查看",
+    "showing": "正在查看"
+  },
+  "running": {
+    "starting": "正在开始…",
+    "withModel": "正在用 {{backend}} · {{model}} 写",
+    "automatic": "正在准备周一的笔记",
+    "stage": {
+      "building_context": "正在整理你这一周",
+      "waiting_for_model": "正在等待模型",
+      "validating": "正在检查笔记",
+      "repairing": "正在修正回答格式",
+      "scheduling": "正在整理笔记"
+    },
+    "stop": "停止",
+    "stopping": "正在停止…",
+    "writingNow": "正在写你的笔记",
+    "leaveHint": "离开此页面不会中断；写完后笔记会保存。"
+  },
+  "result": {
+    "done": "每周笔记写好了。",
+    "stopped": "已停止，没有保存任何内容。",
+    "failed": "无法写出这份笔记。"
+  },
+  "settings": {
+    "title": "每周笔记",
+    "prepare": "周一打开 PageLamp 时自动准备我的每周笔记",
+    "costKey": "使用 {{backend}} · {{model}}：每周一 {{cost}}，计入你的每月预算。",
+    "costLocal": "使用 {{backend}} · {{model}}，在这台电脑上运行。",
+    "costUnpriced": "使用 {{backend}} · {{model}}，计入你的每月预算（这个模型没有价格信息）。",
+    "costWeekEmpty": "使用 {{backend}} · {{model}}，计入你的每月预算（费用取决于那一周的内容）。",
+    "paused": "已暂停：每周笔记用的模型不再是 API 密钥或这台电脑上的模型。",
+    "saveFailed": "无法保存这项设置。"
+  }
+}

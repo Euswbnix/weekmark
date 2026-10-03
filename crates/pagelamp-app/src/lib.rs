@@ -31,6 +31,7 @@ pub mod diagnostics;
 mod lock;
 mod material_file;
 mod mcp_config;
+mod reminders;
 mod sync;
 pub mod trash;
 mod updates;
@@ -42,13 +43,15 @@ pub use course::calendar::{
 };
 pub use course::dates::{BreakInput, CourseDatesInput, SegmentInput};
 pub use course::removal::{
-    BackupInfo, LostAfterPurge, PurgeReport, RemovalPreview, RemovalPreviewItem, RemovalReason,
-    RemovalReport, RemoveOptions, RemovedCourse, RestoreFailure, RestoreOutcome, TombstoneState,
+    BackupInfo, LostAfterPurge, PurgeReport, PurgeTargets, RemovalPreview, RemovalPreviewItem,
+    RemovalReason, RemovalReport, RemoveOptions, RemovedCourse, RestoreFailure, RestoreOutcome,
+    TombstoneState,
 };
 pub use course::{
     CourseLifecycleEntry, KEEP_CURRENT_DAYS, LifecycleSummary, NOT_NOW_DAYS, keep_forever,
 };
 pub use material_file::LocalFileUse;
+pub use reminders::{DayOfWeek, Reminder, ReminderKind, ReminderSettings};
 pub use updates::{
     Shell, StartupTasks, UpdateChannel, UpdateCheckOutcome, UpdateCheckRecord, UpdatePrefs,
     WhatsNew, WhatsNewTopic,
@@ -469,6 +472,8 @@ pub(crate) struct AppState {
     pub(crate) runs: ai::run::Runs,
     /// Where removed courses' downloaded files go (`trash`).
     pub(crate) trash: trash::TrashSlot,
+    /// The time zone reminders and the digest use instead of the computer's (`set_time_zone`).
+    pub(crate) zone: std::sync::RwLock<Option<pagelamp_core::dates::Tz>>,
 }
 
 impl std::fmt::Debug for App {
@@ -1328,6 +1333,33 @@ struct AppTypes {
     calendar_run_outcome: CalendarRunOutcome,
     calendar_batch_event: CalendarBatchEvent,
     calendar_proposal: pagelamp_core::calendar::proposal::CalendarProposal,
+    // M3: reminders and the weekly digest
+    weekly_digest: pagelamp_core::views::WeeklyDigest,
+    reminder: Reminder,
+    reminder_kind: ReminderKind,
+    reminder_settings: ReminderSettings,
+    day_of_week: DayOfWeek,
+    // M3: study plans
+    study_plan_request: ai::StudyPlanRequest,
+    plan_limits: ai::PlanLimits,
+    generated_study_plan: ai::GeneratedStudyPlan,
+    plan_warning: ai::PlanWarning,
+    plan_warning_code: ai::PlanWarningCode,
+    plan_origin: pagelamp_core::model::PlanOrigin,
+    unscheduled_task: pagelamp_core::planner::UnscheduledTask,
+    unscheduled_reason: pagelamp_core::planner::UnscheduledReason,
+    // M3: weekly explanations
+    weekly_explanation: ai::WeeklyExplanation,
+    explanation_section: ai::ExplanationSection,
+    explanation_paragraph: ai::ExplanationParagraph,
+    citation: ai::Citation,
+    explain_options: ai::ExplainOptions,
+    output_language: ai::OutputLanguage,
+    // beta.2: the AI weekly note
+    weekly_note: ai::WeeklyNote,
+    note_focus: ai::NoteFocus,
+    weekly_note_options: ai::WeeklyNoteOptions,
+    weekly_note_settings: ai::WeeklyNoteSettings,
 }
 
 /// JSON Schema (draft 2020-12) of every type crossing the facade, as one document.

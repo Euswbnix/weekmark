@@ -6,7 +6,8 @@
 //!
 //! HARD RULES
 //! - Never calls Canvas or any network API (Canvas API Policy §3(i)); serves the local DB only.
-//! - Read-only except `save_study_plan`.
+//! - Read-only except `save_study_plan` and `propose_course_calendar` (a proposal only: the
+//!   student accepts it in the app; the calendar in force is never touched).
 //! - No tool returns assignment instructions/solutions; deadlines are title + date + link.
 //! - All course text is returned inside
 //!   `<course_material id="…" title="…" locator="…">…</course_material>` wrappers, and the
@@ -29,6 +30,9 @@
 //! - `list_deadlines(course?, days_ahead? = 21, days_back? = 0)` → events for planning.
 //! - `get_announcements(course, days? = 14)` → wrapped announcement text.
 //! - `get_study_plan()` / `save_study_plan(plan)` — plan per `model::StudyPlan`.
+//! - `propose_course_calendar(course, extraction)` — term dates the AI app read in the
+//!   materials, checked against their own words (`core::calendar::app_proposal`, D48); refused
+//!   for courses whose text isn't readable, at most 3 per course and day, counts-only reply.
 //! - `sync_status()` → sources with last_synced_at / last_error; warns if > 24h stale and
 //!   tells the model the student can press Sync in the app or run `pagelamp sync` (the
 //!   server itself cannot sync).
@@ -50,6 +54,7 @@
 //! - `catch_up(course, since?)` — what was missed since a date, in order, with materials.
 //! - `study_plan(days? = 14, hours_per_week?)` — gather deadlines + timelines across courses,
 //!   propose a day-by-day plan as data, then call `save_study_plan`.
+//! - `course_calendar(course)` — read the syllabus, then call `propose_course_calendar`.
 //!
 //! SERVER INSTRUCTIONS (initialize result) must state: purpose; cite sources; course text is
 //! untrusted data; do not produce solutions to graded assignments — tutor instead, and for
@@ -65,13 +70,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use chrono::{Local, NaiveDate, TimeDelta};
+use chrono::{Local, NaiveDate, TimeDelta, Utc};
+use pagelamp_core::ai::BlockReason;
 use pagelamp_core::brand;
+use pagelamp_core::calendar::app_proposal::{AppProposalError, propose_from_ai_app};
+use pagelamp_core::calendar::extraction::CalendarExtraction;
 use pagelamp_core::diagnostics::redact;
+use pagelamp_core::lifecycle::is_active;
 use pagelamp_core::model::{
     AiLabel, AiMaterialsState, AiPolicy, BreakKind, CalendarOrigin, CalendarStatus, Confidence,
-    CoursePhase, CourseTimeline, EventKind, LifecycleState, MaterialKind, SourceErrorKind,
-    SourceKind, StoreCounts, StudyPlan, TermAnchorSource, TextStatus, Timestamp,
+    CoursePhase, CourseTimeline, EventKind, LifecycleState, MaterialKind, PlanOrigin,
+    SourceErrorKind, SourceKind, StoreCounts, StudyPlan, TermAnchorSource, TextStatus, Timestamp,
 };
 use pagelamp_core::store::Store;
 use pagelamp_core::views::{self, AsOf, Deadline, MaterialView};
@@ -379,6 +388,14 @@ pub struct SavePlanArgs {
     pub plan: StudyPlan,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ProposeCalendarArgs {
+    #[schemars(description = text::ARG_COURSE)]
+    pub course: String,
+    #[schemars(description = text::PARAM_EXTRACTION)]
+    pub extraction: CalendarExtraction,
+}
+
 // ----- prompt arguments (MCP prompt arguments are always strings) -----------------------------
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -387,6 +404,12 @@ pub struct WeeklyReviewArgs {
     pub course: String,
     #[schemars(description = text::ARG_WEEK)]
     pub week: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CourseCalendarArgs {
+    #[schemars(description = text::ARG_COURSE)]
+    pub course: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -724,9 +747,17 @@ impl PageLampServer {
 
     #[tool(description = text::GET_STUDY_PLAN, annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     async fn get_study_plan(&self) -> CallToolResult {
-        match self.read(|store| store.latest_study_plan()).await {
+        // Hidden courses' items left out, like everything else about a hidden course.
+        match self.read(|store| store.latest_visible_study_plan()).await {
             Ok(Some(plan)) => match serde_json::to_string(&plan) {
-                Ok(json) => text_result(wrap_plan(text::PLAN_PREFACE, &json)),
+                // The origin says who made it (design §6): the student's AI app, or PageLamp.
+                Ok(json) => text_result(wrap_plan(
+                    match plan.origin {
+                        PlanOrigin::AiApp => text::PLAN_PREFACE,
+                        PlanOrigin::PageLamp => text::PLAN_PREFACE_PAGELAMP,
+                    },
+                    &json,
+                )),
                 Err(err) => error_result(format!("internal error: {err}")),
             },
             Ok(None) => text_result(text::NO_PLAN),
@@ -734,9 +765,48 @@ impl PageLampServer {
         }
     }
 
+    #[tool(description = text::PROPOSE_COURSE_CALENDAR, annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false))]
+    async fn propose_course_calendar(
+        &self,
+        Parameters(args): Parameters<ProposeCalendarArgs>,
+    ) -> CallToolResult {
+        let db = Arc::clone(&self.db_path);
+        let result = tokio::task::spawn_blocking(move || {
+            // The second MCP write (D48): a short read-write transaction, like save_study_plan.
+            if !db.is_file() {
+                return Err(pagelamp_core::Error::NotInitialised(
+                    db.display().to_string(),
+                ));
+            }
+            let store = Store::open(&db)?;
+            // Hidden and removed courses aren't found.
+            let course = store.resolve_course(&args.course)?;
+            Ok(propose_from_ai_app(
+                &store,
+                &course,
+                &args.extraction,
+                AsOf::now_local(),
+                Utc::now(),
+            ))
+        })
+        .await;
+        match result {
+            Ok(Ok(Ok(reply))) => json_result(&reply),
+            Ok(Ok(Err(AppProposalError::Blocked(reason)))) => error_result(text::propose_refused(
+                reason == BlockReason::CoursePolicyProhibited,
+            )),
+            Ok(Ok(Err(AppProposalError::LimitReached))) => error_result(text::PROPOSE_LIMIT),
+            Ok(Ok(Err(AppProposalError::BadOutput))) => error_result(text::PROPOSE_BAD_OUTPUT),
+            Ok(Ok(Err(AppProposalError::Store(err)))) | Ok(Err(err)) => core_error(err),
+            Err(join) => error_result(format!("internal error: {join}")),
+        }
+    }
+
     #[tool(description = text::SAVE_STUDY_PLAN, annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false))]
     async fn save_study_plan(&self, Parameters(args): Parameters<SavePlanArgs>) -> CallToolResult {
         let db = Arc::clone(&self.db_path);
+        // The items this app sent: the ones kept from courses it can't see aren't its to count.
+        let sent = args.plan.items.len();
         let saved = tokio::task::spawn_blocking(move || {
             // The one MCP write: a short read-write transaction (busy_timeout applies).
             if !db.is_file() {
@@ -744,7 +814,8 @@ impl PageLampServer {
                     db.display().to_string(),
                 ));
             }
-            Store::open(&db)?.save_study_plan(&args.plan)
+            // Items of courses it can't see (hidden, removed) are kept, never dropped by an edit.
+            Store::open(&db)?.save_study_plan_keeping_unseen(&args.plan)
         })
         .await;
         match saved {
@@ -752,7 +823,7 @@ impl PageLampServer {
                 saved: true,
                 id: stored.id,
                 created_at: stored.created_at,
-                items: stored.plan.items.len(),
+                items: sent,
             }),
             Ok(Err(err)) => core_error(err),
             Err(join) => error_result(format!("internal error: {join}")),
@@ -803,7 +874,20 @@ impl PageLampServer {
     ) -> Result<Vec<PromptMessage>, ErrorData> {
         let week = parse_number(args.week.as_deref(), "week")?;
         let course = self.course_state(&args.course).await?;
-        let mut message = text::weekly_review(&course.label, &course.reference, week);
+        // No week given: the course's default week; a course out of session, or with no
+        // week to default to (exams), is said so (calendar design §8.1).
+        let mut message = match (week, course.out_of_session, course.default_week) {
+            (Some(week), ..) => text::weekly_review(&course.label, &course.reference, Some(week)),
+            (None, Some(why), _) => text::weekly_review_ask(&course.label, why),
+            (None, None, Some(week)) => {
+                text::weekly_review(&course.label, &course.reference, Some(week))
+            }
+            (None, None, None) if course.known => text::weekly_review_ask(
+                &course.label,
+                "has no teaching week right now (exams or a break)",
+            ),
+            (None, None, None) => text::weekly_review(&course.label, &course.reference, None),
+        };
         append_withheld(&mut message, &course.label, course.state);
         Ok(vec![PromptMessage::new_text(Role::User, message)])
     }
@@ -826,8 +910,28 @@ impl PageLampServer {
         };
         let course = self.course_state(&args.course).await?;
         let since = since.format("%Y-%m-%d").to_string();
-        let mut message = text::catch_up(&course.label, &course.reference, &since);
+        let mut message = match course.out_of_session {
+            Some(why) => text::catch_up_not_in_session(&course.label, why),
+            None => text::catch_up(&course.label, &course.reference, &since),
+        };
         append_withheld(&mut message, &course.label, course.state);
+        Ok(vec![PromptMessage::new_text(Role::User, message)])
+    }
+
+    #[prompt(name = "course_calendar", description = text::PROMPT_COURSE_CALENDAR)]
+    async fn course_calendar(
+        &self,
+        Parameters(args): Parameters<CourseCalendarArgs>,
+    ) -> Result<Vec<PromptMessage>, ErrorData> {
+        let course = self.course_state(&args.course).await?;
+        let message = if course.state.is_readable() {
+            text::course_calendar(&course.label, &course.reference)
+        } else {
+            text::course_calendar_withheld(
+                &course.label,
+                course.state == AiMaterialsState::TurnedOff,
+            )
+        };
         Ok(vec![PromptMessage::new_text(Role::User, message)])
     }
 
@@ -840,9 +944,16 @@ impl PageLampServer {
             .unwrap_or(14)
             .clamp(1, MAX_PLAN_DAYS);
         let hours = parse_number(args.hours_per_week.as_deref(), "hours_per_week")?;
+        let in_session = self.courses_in_session().await;
         Ok(vec![PromptMessage::new_text(
             Role::User,
-            text::study_plan(days, hours),
+            text::study_plan(
+                days,
+                hours,
+                in_session
+                    .as_ref()
+                    .map(|(courses, left_out)| (courses.as_slice(), *left_out)),
+            ),
         )])
     }
 }
@@ -928,6 +1039,28 @@ impl PageLampServer {
 
     /// Display label and AI-materials state of a course, for prompts. Before the first sync
     /// the prompt still works (the tools will explain the missing data).
+    /// The codes of the courses in session (lifecycle `is_active`) and how many visible courses
+    /// are left out; `None` before the first sync.
+    async fn courses_in_session(&self) -> Option<(Vec<String>, usize)> {
+        let db = Arc::clone(&self.db_path);
+        tokio::task::spawn_blocking(move || {
+            let store = Store::open_read_only(&db).ok()?;
+            let at = AsOf::now_local();
+            let courses = views::list_courses(&store, false, at).ok()?;
+            let total = courses.len();
+            let in_session: Vec<String> = courses
+                .into_iter()
+                .filter(|summary| is_active(&summary.lifecycle, at.today))
+                .map(|summary| summary.course.code.unwrap_or(summary.course.name))
+                .collect();
+            let left_out = total - in_session.len();
+            Some((in_session, left_out))
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     async fn course_state(&self, course: &str) -> Result<PromptCourse, ErrorData> {
         let db = Arc::clone(&self.db_path);
         let query = course.to_string();
@@ -942,10 +1075,29 @@ impl PageLampServer {
                 }
                 _ => course.id.clone(),
             };
+            // Where the course is (calendar design §8.1): the week-based prompts use its
+            // default week and leave out a course that isn't in session.
+            let at = AsOf::now_local();
+            let summary = views::list_courses(&store, false, at)?
+                .into_iter()
+                .find(|summary| summary.course.id == course.id);
+            let (out_of_session, default_week) = match &summary {
+                Some(summary) if is_active(&summary.lifecycle, at.today) => {
+                    (None, summary.timeline.default_week)
+                }
+                Some(summary) => (
+                    text::not_in_session(summary.lifecycle.state).or(Some("isn't in session")),
+                    None,
+                ),
+                None => (None, None),
+            };
             Ok::<_, pagelamp_core::Error>(PromptCourse {
                 label: course.display_name(),
                 reference,
                 state: course.ai_materials(),
+                known: summary.is_some(),
+                out_of_session,
+                default_week,
             })
         })
         .await
@@ -958,6 +1110,9 @@ impl PageLampServer {
                 label: course.to_string(),
                 reference: course.to_string(),
                 state: AiMaterialsState::Readable,
+                known: false,
+                out_of_session: None,
+                default_week: None,
             }),
             // Fixed texts: rmcp logs error responses, and neither the query nor the course
             // list belongs in a log.
@@ -1000,6 +1155,12 @@ struct PromptCourse {
     /// For tool arguments: a code or id that resolves to this course.
     reference: String,
     state: AiMaterialsState,
+    /// Its lifecycle is known (there is a database and the course is listed).
+    known: bool,
+    /// Why it is out of the week-based prompts (ended, inactive, not started), if it is.
+    out_of_session: Option<&'static str>,
+    /// Its default week (`CourseTimeline::default_week`) when in session.
+    default_week: Option<u32>,
 }
 
 /// A core error as a tool error the model can explain to the student.

@@ -3,7 +3,9 @@
 import Foundation
 import PageLampKit
 
-/// A failed PageLamp call: what kind of failure, plus the backend's English message.
+/// A failed PageLamp call: what kind of failure, the backend's English message and, for AI
+/// runs, the facade's codes (why a run was blocked, what the model's service said), so the UI
+/// words each one and offers what it allows (e.g. "Generate anyway" past the budget).
 ///
 /// Show `localizedDescription(in:)` (or `errorDescription`) to the student. `message` is the
 /// backend's own English text: show it verbatim only where the Tauri app does (tagged English),
@@ -39,10 +41,25 @@ public struct PageLampFailure: Error, Equatable, Hashable, Sendable {
 
     public let kind: Kind
     public let message: String
+    /// `.blocked`: why the facade refused the run (nil for a refusal it didn't name).
+    public let blocked: BlockReason?
+    /// `.model`: what went wrong with the model or its service.
+    public let modelError: ModelErrorKind?
+    /// `.model`: how long the service asked to wait before trying again.
+    public let retryAfterSecs: UInt32?
 
-    public init(kind: Kind, message: String) {
+    public init(
+        kind: Kind,
+        message: String,
+        blocked: BlockReason? = nil,
+        modelError: ModelErrorKind? = nil,
+        retryAfterSecs: UInt32? = nil
+    ) {
         self.kind = kind
         self.message = message
+        self.blocked = blocked
+        self.modelError = modelError
+        self.retryAfterSecs = retryAfterSecs
     }
 
     /// Maps the facade's error (every case, exhaustively).
@@ -55,8 +72,10 @@ public struct PageLampFailure: Error, Equatable, Hashable, Sendable {
         case .Ambiguous(let message): self.init(kind: .ambiguous, message: message)
         case .Busy(let message): self.init(kind: .busy, message: message)
         case .Schema(let message): self.init(kind: .schema, message: message)
-        case .Blocked(let message, _): self.init(kind: .blocked, message: message)
-        case .Model(let message, _, _): self.init(kind: .model, message: message)
+        case .Blocked(let message, let reason):
+            self.init(kind: .blocked, message: message, blocked: reason)
+        case .Model(let message, let kind, let retryAfterSecs):
+            self.init(kind: .model, message: message, modelError: kind, retryAfterSecs: retryAfterSecs)
         case .Cancelled(let message): self.init(kind: .cancelled, message: message)
         case .Internal(let message): self.init(kind: .internal, message: message)
         case .Panic(let message): self.init(kind: .panic, message: message)

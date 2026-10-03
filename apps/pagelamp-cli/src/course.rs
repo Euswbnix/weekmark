@@ -6,8 +6,10 @@
 use chrono::NaiveDate;
 use pagelamp_app::ai::GenEvent;
 use pagelamp_app::{
-    App, CourseCalendarView, ReadCalendarOptions, RemoveOptions, RestoreFailure, TombstoneState,
+    App, CourseCalendarView, PurgeTargets, ReadCalendarOptions, RemovalPreview, RemoveOptions,
+    RestoreFailure, TombstoneState,
 };
+use pagelamp_core::ai::AiFeature;
 use pagelamp_core::calendar::CourseCalendar;
 use pagelamp_core::calendar::assemble::DateKind;
 use pagelamp_core::calendar::candidates::CandidateLeftOut;
@@ -17,7 +19,7 @@ use pagelamp_core::model::{
 };
 use pagelamp_core::views::CourseSummary;
 
-use crate::{ai_materials, confidence, print_json};
+use crate::{ai_materials, confidence, confirm, print_json};
 
 /// Which lifecycle groups `pagelamp courses` shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -356,6 +358,7 @@ pub async fn calendar(
             None => {}
         },
         CalendarAction::Read { over_budget } => {
+            crate::features::refuse_unattended_plan_run(app, AiFeature::CourseCalendar)?;
             let generation_id = format!("cli-{}", std::process::id());
             let options = ReadCalendarOptions {
                 override_budget: over_budget,
@@ -535,12 +538,15 @@ fn phase_word(phase: CoursePhase) -> &'static str {
     }
 }
 
-/// `pagelamp course remove <courses…> [--dry-run] [--now] [--keep-files] [--delete-backup]`
+/// `pagelamp course remove <courses…> [--dry-run] [--now] [--keep-files] [--delete-backup]
+/// [--yes]`: shows what goes, then asks (design §7.13); `--dry-run` only shows it, `--yes`
+/// neither shows nor asks. Without a terminal and without `--yes`, nothing changes.
 pub async fn remove(
     app: &App,
     courses: Vec<String>,
     dry_run: bool,
     options: RemoveOptions,
+    yes: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     if dry_run {
@@ -548,42 +554,25 @@ pub async fn remove(
         if json {
             return print_json(&preview);
         }
-        for item in &preview.items {
-            let label = item.code.as_deref().unwrap_or(&item.name);
-            println!(
-                "{label} — {} materials, {} deadlines",
-                item.materials, item.deadlines
-            );
-            if item.downloaded_files > 0 {
-                println!(
-                    "  {} downloaded files ({} KB) go to the Trash (--keep-files keeps them)",
-                    item.downloaded_files,
-                    item.downloaded_bytes.div_ceil(1024)
-                );
-            }
-            if item.own_folder_untouched {
-                println!("  Your folder isn't changed; PageLamp stops reading it.");
-            }
-            if item.custom_settings {
-                println!("  Your settings for it are kept for a restore.");
-            }
-            if item.cannot_sync_again {
-                println!("  Canvas restricts this course: it can't be synced again.");
-            }
-        }
-        if let Some(backup) = &preview.backup {
-            println!(
-                "The pre-update backup ({} days old) still holds their text{}.",
-                backup.age_days,
-                if backup.delete_by_default {
-                    "; consider --delete-backup"
-                } else {
-                    ": keep it until you know the update works"
-                }
-            );
-        }
+        print!("{}", removal_preview_text(&preview, &options));
         return Ok(());
     }
+    let courses = if yes {
+        courses
+    } else {
+        // Before the question, on stderr: stdout keeps only the result (`--json` too). An
+        // unknown or already removed course fails here, before anything is asked.
+        let preview = app.removal_preview(courses)?;
+        eprint!("{}", removal_preview_text(&preview, &options));
+        confirm(&removal_question(&preview, &options), false)?;
+        // Exactly what was shown, by id: a course removed or pruned while the question waits
+        // is then not found, and a code can't land on another course.
+        preview
+            .items
+            .iter()
+            .map(|item| item.course_id.clone())
+            .collect()
+    };
     let report = app.remove_courses(courses, options).await?;
     if json {
         return print_json(&report);
@@ -608,6 +597,81 @@ pub async fn remove(
         println!("The pre-update backup couldn't be deleted; it is still in the data folder.");
     }
     Ok(())
+}
+
+/// What a removal takes and keeps, per course, as `--dry-run` shows it and as the question
+/// before a removal follows (with the options already chosen).
+fn removal_preview_text(preview: &RemovalPreview, options: &RemoveOptions) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for item in &preview.items {
+        let label = item.code.as_deref().unwrap_or(&item.name);
+        let _ = writeln!(
+            text,
+            "{label} — {} materials, {} deadlines",
+            item.materials, item.deadlines
+        );
+        if item.downloaded_files > 0 {
+            let (files, kb) = (item.downloaded_files, item.downloaded_bytes.div_ceil(1024));
+            let _ = if options.keep_downloaded_files {
+                writeln!(
+                    text,
+                    "  {files} downloaded files ({kb} KB) are kept (--keep-files)"
+                )
+            } else {
+                writeln!(
+                    text,
+                    "  {files} downloaded files ({kb} KB) go to the Trash (--keep-files keeps them)"
+                )
+            };
+        }
+        if item.own_folder_untouched {
+            text.push_str("  Your folder isn't changed; PageLamp stops reading it.\n");
+        }
+        if item.custom_settings {
+            text.push_str("  Your settings for it are kept for a restore.\n");
+        }
+        if item.cannot_sync_again {
+            text.push_str("  Canvas restricts this course: it can't be synced again.\n");
+        }
+    }
+    if let Some(backup) = &preview.backup {
+        let _ = writeln!(
+            text,
+            "The pre-update backup ({} days old) still holds their text{}.",
+            backup.age_days,
+            if options.delete_pre_update_backup && backup.delete_by_default {
+                "; it is deleted with them (--delete-backup)"
+            } else if options.delete_pre_update_backup {
+                "; it is deleted with them (--delete-backup), though it is the way back if the \
+                 update went wrong"
+            } else if backup.delete_by_default {
+                "; consider --delete-backup"
+            } else {
+                ": keep it until you know the update works"
+            }
+        );
+    }
+    text
+}
+
+/// The question after the preview: when the data goes, and whether it can be undone.
+fn removal_question(preview: &RemovalPreview, options: &RemoveOptions) -> String {
+    let labels: Vec<&str> = preview
+        .items
+        .iter()
+        .map(|item| item.code.as_deref().unwrap_or(&item.name))
+        .collect();
+    let labels = labels.join(", ");
+    if options.purge_now {
+        format!("Remove {labels} and delete the local data now? This can't be undone.")
+    } else {
+        format!(
+            "Remove {labels}? The local data is deleted in {} days; `{} course restore` undoes it until then.",
+            pagelamp_core::removal::PURGE_AFTER_DAYS,
+            pagelamp_core::brand::CLI_NAME
+        )
+    }
 }
 
 /// `pagelamp course removed`
@@ -658,14 +722,35 @@ pub async fn restore(app: &App, removed_id: &str, json: bool) -> anyhow::Result<
     Ok(())
 }
 
-/// `pagelamp course purge [<removed ids…>] [--permanent]`
+/// `pagelamp course purge [<removed ids…>] [--permanent] [--yes]`: shows what goes, then asks;
+/// `--yes` neither shows nor asks. Nothing to delete: nothing is asked. Without a terminal and
+/// without `--yes`, nothing changes.
 pub async fn purge(
     app: &App,
     removed_ids: Vec<String>,
     permanent: bool,
+    yes: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let ids = (!removed_ids.is_empty()).then_some(removed_ids);
+    let ids = if yes {
+        ids
+    } else {
+        // The facade's own choice of what a purge does; an unknown id fails here.
+        let targets = app.purge_targets(ids.as_deref())?;
+        if !targets.courses.is_empty() {
+            eprint!("{}", purge_preview_text(&targets, permanent));
+            confirm(&purge_question(&targets, permanent), false)?;
+        }
+        // Exactly what was shown: a removal that falls due while the question waits isn't added.
+        Some(
+            targets
+                .courses
+                .iter()
+                .map(|course| course.removed_id.clone())
+                .collect(),
+        )
+    };
     let report = app.purge_removed_courses(ids, permanent).await?;
     if json {
         return print_json(&report);
@@ -683,4 +768,41 @@ pub async fn purge(
         println!("The pre-update backup couldn't be deleted; it is still in the data folder.");
     }
     Ok(())
+}
+
+/// What a purge does, per removed course.
+fn purge_preview_text(targets: &PurgeTargets, permanent: bool) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for course in &targets.courses {
+        let label = course.code.as_deref().unwrap_or(&course.name);
+        let what = match course.state {
+            TombstoneState::Pending => "its local data is deleted now, and its undo ends",
+            _ => "its downloaded files still on this computer go to the Trash",
+        };
+        let _ = writeln!(text, "{label} — {what}");
+    }
+    if targets.deletes_backup {
+        text.push_str("The pre-update backup is deleted too (asked for with --delete-backup).\n");
+    }
+    if permanent {
+        text.push_str(
+            "Where the Trash can't take downloaded files, they are deleted permanently (--permanent).\n",
+        );
+    }
+    text
+}
+
+/// The question after the purge preview.
+fn purge_question(targets: &PurgeTargets, permanent: bool) -> String {
+    let n = targets.courses.len();
+    let deletes = targets
+        .courses
+        .iter()
+        .any(|course| course.state == TombstoneState::Pending);
+    if permanent || deletes || targets.deletes_backup {
+        format!("Delete the data of {n} removed course(s) now? This can't be undone.")
+    } else {
+        format!("Move the downloaded files of {n} removed course(s) to the Trash?")
+    }
 }

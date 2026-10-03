@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, vi } from "vitest";
+import { useNoteRunStore } from "@/features/weekly-note/useWeeklyNote";
 import i18n, { initI18n } from "@/i18n";
 import { useCodexStore } from "@/stores/codex";
 import { useSyncStore } from "@/stores/sync";
@@ -56,4 +57,5 @@ afterEach(() => {
   useSyncStore.getState().reset();
   useUpdateStore.getState().reset();
   useCodexStore.setState({ install: { phase: "idle" } });
+  useNoteRunStore.setState({ run: { phase: "idle" }, automaticProblem: null });
 });

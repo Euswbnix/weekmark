@@ -112,6 +112,49 @@ describe("mock AI setup", () => {
     expect(after.would_block).toBeNull();
   });
 
+  it("prices what Include sends, so a budget can stop only the run that includes", async () => {
+    const api = createMockApi({ ...fast, scenario: "ai-key" });
+    const demo101 = await courseId(api, "DEMO101");
+    const { materials } = await api.weekMaterials(demo101.id);
+    const assignment = materials.find((m) => m.title.startsWith("Assignment 4"));
+    if (!assignment) throw new Error("week 4 has Assignment 4");
+    const plain = { feature: "weekly_explanation", course: demo101.id } as const;
+    const withAssignment = { ...plain, include: [assignment.id] };
+    const base = await api.estimateGeneration(plain);
+    // An id the week doesn't have is sent nowhere, so it costs nothing (like the facade).
+    const unknown = await api.estimateGeneration({ ...plain, include: ["no-such-material"] });
+    expect(unknown.input_tokens).toBe(base.input_tokens);
+    const included = await api.estimateGeneration(withAssignment);
+    expect(included.input_tokens).toBeGreaterThan(base.input_tokens);
+    const [low, high] = [base.micro_usd_upper ?? 0, included.micro_usd_upper ?? 0];
+    expect(high).toBeGreaterThan(low + 1);
+    const { spent_micro_usd } = (await api.aiStatus()).budget;
+    await api.setMonthlyBudget(spent_micro_usd + Math.floor((low + high) / 2));
+    expect((await api.estimateGeneration(plain)).would_block).toBeNull();
+    expect((await api.estimateGeneration(withAssignment)).would_block).toBe("budget_reached");
+    // The run with the same include stops the same way, and the plain one doesn't.
+    const options = { include: [assignment.id], override_budget: false, ui_language: "en" };
+    await expect(
+      api.explainWeek(demo101.id, null, "explain-include", options, () => {}),
+    ).rejects.toMatchObject({ kind: "blocked", blocked: "budget_reached" });
+  });
+
+  it("prices only what Include lifts: a material read anyway or not graded-looking adds nothing", async () => {
+    const api = createMockApi({ ...fast, scenario: "ai-key" });
+    const demo101 = await courseId(api, "DEMO101");
+    const { materials } = await api.weekMaterials(demo101.id);
+    const slides = materials.find((m) => m.title.startsWith("Week 4 slides"));
+    const practice = materials.find((m) => m.title.startsWith("Week 4 practice"));
+    if (!slides || !practice) throw new Error("week 4 has its slides and practice questions");
+    const plain = { feature: "weekly_explanation", course: demo101.id } as const;
+    const base = await api.estimateGeneration(plain);
+    for (const id of [slides.id, practice.id]) {
+      const priced = await api.estimateGeneration({ ...plain, include: [id] });
+      expect(priced.input_tokens).toBe(base.input_tokens);
+      expect(priced.micro_usd_upper).toBe(base.micro_usd_upper);
+    }
+  });
+
   it("blocks a run over the budget until the cap is raised or removed", async () => {
     const api = createMockApi({ ...fast, scenario: "ai-budget" });
     expect((await api.aiStatus()).budget.spent_micro_usd).toBe(4_960_000);

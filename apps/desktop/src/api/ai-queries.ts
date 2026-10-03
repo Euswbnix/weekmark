@@ -96,19 +96,24 @@ export function useDebouncedValue<T>(value: T, ms: number): T {
 
 /**
  * "≈ $x" before Generate. Debounced (the request changes as the student edits the form); the
- * previous estimate stays on screen meanwhile. `req` null = nothing to estimate yet.
+ * previous estimate stays on screen meanwhile, and `settling` says it is still the previous
+ * request's: the request changed and its own estimate hasn't arrived (a run must not start from
+ * it). A refetch of the same request keeps its estimate and isn't settling. `req` null = nothing
+ * to estimate yet.
  */
 export function useCostEstimate(req: EstimateRequest | null) {
   const api = useApi();
   // Keyed by content, so a new object with the same fields doesn't restart the debounce.
-  const settled = useDebouncedValue(req ? JSON.stringify(req) : null, 300);
+  const current = req ? JSON.stringify(req) : null;
+  const settled = useDebouncedValue(current, 300);
   const request = settled ? (JSON.parse(settled) as EstimateRequest) : null;
-  return useQuery({
+  const query = useQuery({
     queryKey: request ? aiKeys.estimate(request) : [...aiKeys.all, "estimate", null],
     queryFn: () => api.estimateGeneration(request as EstimateRequest),
     enabled: request !== null,
     placeholderData: (previous) => previous,
   });
+  return { ...query, settling: current !== settled || query.isPlaceholderData };
 }
 
 /** `month` = the first day of a month; null = this month. */

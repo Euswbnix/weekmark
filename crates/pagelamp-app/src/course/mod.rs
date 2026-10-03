@@ -37,6 +37,8 @@ pub fn keep_forever() -> NaiveDate {
 }
 
 const BANNER_KEY: &str = "lifecycle.banner_snoozed";
+/// "Not now" on the syllabus reading offers (`snooze_calendar_offers`).
+const OFFERS_KEY: &str = "calendar.offers_snoozed";
 
 /// Every course's lifecycle, and whether the Courses page shows "N courses look finished".
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -61,8 +63,9 @@ pub struct CourseLifecycleEntry {
 }
 
 /// The banner's "Not now": until `until`, for the courses suggested when it was pressed.
+/// (The syllabus reading offers use the same shape.)
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-struct BannerSnooze {
+pub(crate) struct BannerSnooze {
     until: Option<NaiveDate>,
     courses: Vec<String>,
 }
@@ -146,6 +149,42 @@ impl App {
     }
 
     /// "Not now" on the banner: hidden for 14 days, until another course becomes a suggestion.
+    /// "Not now" on the syllabus reading offers (`syllabus_reading_offers`, which
+    /// `startup_tasks().calendar_offers` lists): silent for 14 days for the courses offered
+    /// now; a course offered later shows them again.
+    pub fn snooze_calendar_offers(&self) -> Result<()> {
+        let offered: Vec<String> = self
+            .all_syllabus_reading_offers()?
+            .into_iter()
+            .map(|offer| offer.course_id)
+            .collect();
+        let today = AsOf::now_local().today;
+        self.write_store()?.set_setting(
+            OFFERS_KEY,
+            &BannerSnooze {
+                until: Some(add_days(today, NOT_NOW_DAYS)),
+                courses: offered,
+            },
+        )?;
+        Ok(())
+    }
+
+    /// The offers to show now: every current offer when one of them isn't covered by an
+    /// unexpired "Not now" (like the lifecycle banner), else none.
+    pub(crate) fn unsnoozed_calendar_offers(&self) -> Result<Vec<calendar::SyllabusOffer>> {
+        let offers = self.all_syllabus_reading_offers()?;
+        let snooze: BannerSnooze = self
+            .read_store()?
+            .setting_or_absent(OFFERS_KEY)?
+            .unwrap_or_default();
+        let today = AsOf::now_local().today;
+        let quiet = snooze.until.is_some_and(|until| until >= today)
+            && offers
+                .iter()
+                .all(|offer| snooze.courses.contains(&offer.course_id));
+        Ok(if quiet { Vec::new() } else { offers })
+    }
+
     pub fn snooze_lifecycle_banner(&self) -> Result<()> {
         let store = self.write_store()?;
         let at = AsOf::now_local();

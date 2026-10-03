@@ -1,0 +1,21 @@
+{
+  "ai": {
+    "addKey": "添加 API 密钥…",
+    "turnOn": "查看并启用…",
+    "whatsShared": "会发送哪些内容…",
+    "replaceKey": "更换密钥…",
+    "remove": "移除…",
+    "lookAgain": "重新查找",
+    "checkAndAdd": "验证并添加",
+    "checkAndReplace": "验证并更换",
+    "saveBudget": "保存预算",
+    "removeAll": "删除所有 AI 数据…",
+    "removeAllConfirm": "全部删除",
+    "turnOnName": "启用 {{name}}",
+    "notNow": "以后再说",
+    "useUnpriced": "仍然使用",
+    "sharingAllowed": "可以",
+    "sharingNotSure": "不确定",
+    "sharingNotAllowed": "不可以"
+  }
+}

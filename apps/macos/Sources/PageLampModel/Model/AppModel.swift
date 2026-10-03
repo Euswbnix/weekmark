@@ -59,6 +59,28 @@ public enum MainWindowCommand: Equatable, Sendable {
     case liveData
 }
 
+/// The notification centers the reminders use: the system's for live data (in the app bundle),
+/// one in memory for mock data, so synthetic reminders never reach Notification Center.
+public struct ReminderCenters: Sendable {
+    public var live: @Sendable () -> any NotificationCenterClient
+    public var mock: any NotificationCenterClient
+
+    public init(live: @escaping @Sendable () -> any NotificationCenterClient, mock: any NotificationCenterClient) {
+        self.live = live
+        self.mock = mock
+    }
+
+    public static var standard: ReminderCenters {
+        ReminderCenters(
+            live: {
+                if let system = SystemNotificationCenter.shared() { return system }
+                return RecordingNotificationCenter()
+            },
+            mock: RecordingNotificationCenter()
+        )
+    }
+}
+
 @Observable @MainActor
 public final class AppModel {
     /// How long transient states stay, how fast the mock answers, and how the model waits.
@@ -127,7 +149,15 @@ public final class AppModel {
 
     public private(set) var dataMode: DataMode
     /// The core. Screens load their own data through it (errors are `PageLampFailure`).
-    public private(set) var service: any PageLampService
+    public private(set) var service: any PageLampService {
+        didSet {
+            serviceGeneration += 1
+            weeklyNote?.replace(service: service)
+        }
+    }
+    /// Bumped whenever `service` is replaced (Debug ▸ Data Source, the live facade opening):
+    /// screens holding their own model of the service rebuild on it.
+    public private(set) var serviceGeneration = 0
 
     // MARK: Shell data (spec §2.8)
 
@@ -207,6 +237,44 @@ public final class AppModel {
         didSet { settings.appearance = appearance }
     }
 
+    // MARK: AI (M3; preview builds until it ships)
+
+    /// Settings ▸ AI: the student's models, keys, budget and usage (shared with the Tauri app).
+    public let aiSettings: Bool
+    /// This Week ▸ Plan with PageLamp…: a study plan written by the student's model.
+    public let aiPlan: Bool
+    /// A course's Explain section: a week explained by the student's model.
+    public let aiExplain: Bool
+    /// This Week's weekly note and Monday's (Settings ▸ AI); nil where it's off.
+    public private(set) var weeklyNote: WeeklyNoteModel?
+
+    /// A plan written by PageLamp was saved: This Week shows it at once, then everything is read
+    /// again (a refresh already under way can't put the old plan back; reminders and the menu
+    /// bar's week follow the new plan).
+    public func studyPlanSaved(_ stored: StoredStudyPlan) async {
+        studyPlan = stored
+        sectionErrors[.studyPlan] = nil
+        await refresh()
+    }
+
+    // MARK: Reminders (M3; preview builds until they ship)
+
+    /// Reminders as notifications and the catch-up card; nil where reminders aren't shown yet.
+    public private(set) var reminderDelivery: ReminderDelivery?
+    /// The menu bar extra's week (`weekly_digest()`), read with each refresh where reminders are
+    /// shown; nil until read.
+    public private(set) var menuBarWeek: MenuBarWeek?
+    /// Why the last `weekly_digest()` failed (the menu says so and offers Try Again).
+    public private(set) var menuBarWeekFailure: PageLampFailure?
+    /// Reads of the menu bar's week started: a late, older one is dropped.
+    @ObservationIgnored private var menuBarLoads = 0
+    @ObservationIgnored private let reminderCenters: ReminderCenters
+    @ObservationIgnored private var reminderTasks: [Task<Void, Never>] = []
+    @ObservationIgnored private var reminderResponder: ReminderResponder?
+    /// Opens the main window, which may be closed. A view sets it: `openWindow` lives in
+    /// SwiftUI's environment (a click on a notification uses it).
+    @ObservationIgnored public var openMainWindow: (() -> Void)?
+
     @ObservationIgnored private var activationTask: Task<Void, Never>?
     @ObservationIgnored private var busyPoll: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
@@ -223,9 +291,19 @@ public final class AppModel {
         clock: @escaping @Sendable () -> Date = { Date() },
         notificationCenter: NotificationCenter = .default,
         preferredLanguages: @escaping @Sendable () -> [String] = { Locale.preferredLanguages },
-        service: (any PageLampService)? = nil
+        service: (any PageLampService)? = nil,
+        reminders: Bool = false,
+        reminderCenters: ReminderCenters = .standard,
+        aiSettings: Bool = false,
+        aiPlan: Bool = false,
+        aiExplain: Bool = false,
+        aiNote: Bool = false
     ) {
         self.strings = strings
+        self.aiSettings = aiSettings
+        self.aiPlan = aiPlan
+        self.aiExplain = aiExplain
+        self.reminderCenters = reminderCenters
         self.settings = settings
         self.timing = timing
         self.calendar = calendar
@@ -245,10 +323,41 @@ public final class AppModel {
             self.service = MockService(scenario: .preview, timing: timing.mock, calendar: calendar, now: clock)
         }
         L10n.current = l10n
+        if aiNote {
+            weeklyNote = WeeklyNoteModel(
+                service: self.service, clock: clock, calendar: calendar,
+                timing: WeeklyNoteModel.Timing(sleep: timing.sleep), notificationCenter: notificationCenter,
+                uiLanguage: { [weak self] in self?.localization ?? "en" }
+            )
+        }
+        if reminders {
+            reminderDelivery = ReminderDelivery(
+                service: self.service, center: reminderCenters.mock, record: InMemorySettingsStore(),
+                clock: clock, l10n: { [weak self, strings] in self?.l10n ?? L10n(locale: .current, table: strings) }
+            )
+            // The delegate is set before launch finishes, so a click that launched the app arrives.
+            if SystemNotificationCenter.isAvailable {
+                let responder = ReminderResponder(model: self)
+                reminderResponder = responder
+                SystemNotificationCenter.install(delegate: responder)
+            }
+        }
+    }
+
+    /// The student clicked a reminder's notification: its course (a deadline's), else This Week.
+    public func openFromReminder(courseId: String?) {
+        if let courseId, course(id: courseId) != nil {
+            destination = .course(courseId)
+        } else {
+            destination = .thisWeek
+        }
+        NSApp.activate()
+        openMainWindow?()
     }
 
     isolated deinit {
         activationTask?.cancel()
+        reminderTasks.forEach { $0.cancel() }
         capsuleTimer?.cancel()
         busyPoll?.cancel()
         highlightTimer?.cancel()
@@ -299,6 +408,24 @@ public final class AppModel {
                     await self?.refresh()
                 }
             }
+        }
+        if firstStart { weeklyNote?.start() }
+        if firstStart, reminderDelivery != nil {
+            // A new zone or a wake: the week ahead is scheduled again.
+            let center = notificationCenter
+            let workspace = NSWorkspace.shared.notificationCenter
+            reminderTasks = [
+                Task { [weak self] in
+                    for await _ in center.notifications(named: .NSSystemTimeZoneDidChange) {
+                        self?.reminderDelivery?.requestPass()
+                    }
+                },
+                Task { [weak self] in
+                    for await _ in workspace.notifications(named: NSWorkspace.didWakeNotification) {
+                        self?.reminderDelivery?.requestPass()
+                    }
+                },
+            ]
         }
         await refresh()
         if firstStart { await loadWhatsNew() }
@@ -361,6 +488,33 @@ public final class AppModel {
         updateAttention()
         scheduleBusyPoll()
         appliedRefresh = sequence
+        // After a sync, a plan saved elsewhere, a new day: the week ahead again.
+        reminderDelivery?.requestPass()
+        if reminderDelivery != nil { await loadMenuBarWeek() }
+    }
+
+    /// Reads the digest for the menu bar extra.
+    public func loadMenuBarWeek() async {
+        let generation = self.generation
+        let service = self.service
+        let now = clock()
+        menuBarLoads += 1
+        let load = menuBarLoads
+        // The plan with the digest: its tasks carry its AI-generated line (a plan PageLamp wrote).
+        // The week and the label are one pair, read together: both are new, or neither.
+        async let plan = Self.load { () async throws(PageLampFailure) in try await service.latestStudyPlan() }
+        do throws(PageLampFailure) {
+            let digest = try await service.weeklyDigest()
+            let stored = try await plan.get()
+            guard generation == self.generation, load == menuBarLoads else { return }
+            menuBarWeek = MenuBarWeek(digest: digest, now: now, aiLabel: stored?.aiLabel)
+            menuBarWeekFailure = nil
+        } catch {
+            guard generation == self.generation, load == menuBarLoads else { return }
+            // Either read failed: the week shown stays with its own label (they were read
+            // together); the failure is kept for the next look.
+            menuBarWeekFailure = error
+        }
     }
 
     /// Whether the refresh numbered `sequence` (of the service generation `generation`) is still
@@ -699,16 +853,22 @@ public final class AppModel {
     /// launch and shell, until acknowledged) and shows the topics this build can show. With none
     /// left it acknowledges at once: nothing should wait on a sheet that never shows. When the
     /// state can't be read (the settings aren't readable), it shows nothing and writes nothing.
+    ///
+    /// The same answer carries the reminders that came due since the last launch: the catch-up
+    /// card shows them when reminders are off here (`ReminderDelivery.launch`).
     public func loadWhatsNew() async {
         let generation = self.generation
-        let offered: WhatsNew
+        let tasks: StartupTasks
         do throws(PageLampFailure) {
-            guard let whatsNew = try await service.startupTasks(now: clock()).whatsNew else { return }
-            offered = whatsNew
+            tasks = try await service.startupTasks(now: clock())
         } catch {
+            if generation == self.generation { weeklyNote?.launched(nil) }
             return
         }
         guard generation == self.generation else { return }
+        weeklyNote?.launched(tasks)
+        await reminderDelivery?.launch(due: tasks.dueReminders)
+        guard generation == self.generation, let offered = tasks.whatsNew else { return }
         let l10n = self.l10n
         let items = WhatsNewCatalog.items(for: offered.topics) { l10n.has($0) }
         if items.isEmpty {
@@ -737,6 +897,8 @@ public final class AppModel {
             mode: .mock(scenario)
         )
         await refresh()
+        // A scenario's Monday shows without waiting for the hour.
+        await weeklyNote?.check()
     }
 
     /// Opens the real facade (default data folder, keychain). Call only after the student
@@ -749,9 +911,11 @@ public final class AppModel {
             let live = try await LiveService.openDefault()
             guard generation == self.generation else { return }
             service = live
+            rewireReminders()
         } catch {
             guard generation == self.generation else { return }
             service = UnavailableService(failure: error)
+            rewireReminders()
             phase = .unavailable(error)
             return
         }
@@ -765,6 +929,7 @@ public final class AppModel {
         busyPoll?.cancel()
         self.service = service
         dataMode = mode
+        rewireReminders()
         phase = .loading
         status = nil
         courses = []
@@ -783,7 +948,21 @@ public final class AppModel {
         sourceHighlight = nil
         courseStates = [:]
         whatsNew = nil
+        menuBarWeek = nil
+        menuBarWeekFailure = nil
         if case .course = destination { destination = .thisWeek }
+    }
+
+    /// The reminders follow the data source: live data uses the system's notification center and
+    /// the app's record of what it handed over; mock data a center and a record in memory.
+    private func rewireReminders() {
+        guard let reminderDelivery else { return }
+        switch dataMode {
+        case .live:
+            reminderDelivery.replace(service: service, center: reminderCenters.live(), record: settings)
+        case .mock:
+            reminderDelivery.replace(service: service, center: reminderCenters.mock, record: InMemorySettingsStore())
+        }
     }
 
     /// Debug ▸ a mock sync in which Demo Canvas's token is rejected (attention state).

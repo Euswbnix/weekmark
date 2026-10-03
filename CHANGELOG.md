@@ -21,6 +21,10 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   turns to glass as you scroll, sync status sits in a small capsule, and a warm band marks this
   week. On Windows 11 22H2 and later the window uses Mica; "Reduce transparency" in Settings (or
   the system setting) makes every surface solid. The typeface is now Inter.
+- MCP: your AI app can propose a course's term dates. The `course_calendar` prompt has it read the
+  syllabus and call the new `propose_course_calendar` tool; PageLamp keeps only the dates the
+  material's own words state, and you accept or dismiss the proposal in the app. At most 3 per
+  course per day, and never for a course whose materials you don't share with AI.
 
 ### Changed
 - MCP: tools declare all four annotation hints (read-only, destructive, idempotent, open-world).

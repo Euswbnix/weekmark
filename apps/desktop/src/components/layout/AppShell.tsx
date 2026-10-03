@@ -3,11 +3,15 @@ import { Outlet, useLocation } from "react-router";
 import { useRefreshOnWindowFocus } from "@/api/queries";
 import { brand } from "@/brand";
 import { AccessoryBar } from "@/components/chrome/AccessoryBar";
+import { useStartupPurge } from "@/features/course/removal/useStartupPurge";
 import { CrashNotice } from "@/features/diagnostics/CrashNotice";
+import { RemindersCatchUp } from "@/features/reminders/RemindersCatchUp";
+import { useReminderDelivery } from "@/features/reminders/useReminderDelivery";
 import { PostUpdateBanner } from "@/features/updates/PostUpdateBanner";
 import { UpdateNotice } from "@/features/updates/UpdateNotice";
 import { useUpdateLifecycle } from "@/features/updates/useUpdateLifecycle";
 import { WhatsNewSheet } from "@/features/updates/WhatsNewSheet";
+import { useWeeklyNotePreparation } from "@/features/weekly-note/useWeeklyNote";
 import { cn } from "@/lib/utils";
 import { useRefreshAfterExternalSync } from "@/stores/sync";
 import { LampContext } from "./lamp";
@@ -39,6 +43,9 @@ export function AppShell() {
   useRefreshAfterExternalSync();
   useRefreshOnWindowFocus();
   useUpdateLifecycle();
+  useReminderDelivery();
+  useStartupPurge();
+  useWeeklyNotePreparation();
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar />
@@ -65,6 +72,7 @@ export function AppShell() {
                 <CrashNotice />
                 <PostUpdateBanner />
                 <UpdateNotice />
+                <RemindersCatchUp />
                 <WhatsNewSheet />
                 <Outlet />
               </div>

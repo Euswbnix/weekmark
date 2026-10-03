@@ -1544,6 +1544,194 @@ fn save_and_read_latest_study_plan() {
 }
 
 #[test]
+fn a_model_never_reads_a_hidden_course_s_plan_items() {
+    let store = demo_store();
+    for (external, code, name) in [
+        ("202", "DEMO 202", "Hidden Demo Studies"),
+        ("203", "DEMO203", "Other Demo Studies"),
+    ] {
+        store
+            .upsert_course(&course(external, Some(code), name))
+            .unwrap();
+    }
+    let item = |course: Option<&str>, title: &str| StudyPlanItem {
+        course_id: course.map(str::to_string),
+        ..plan_item(title)
+    };
+    let hidden_id = course_id("202");
+    store
+        .save_study_plan(&plan(vec![
+            item(Some(&course_id("101")), "Visible by id"),
+            item(Some("demo101"), "Visible by code"),
+            item(None, "No course"),
+            item(Some("A course PageLamp doesn't know"), "Unknown course"),
+            item(Some(&hidden_id), "Hidden by id"),
+            // As an AI app may write it: the code in other case and spacing, the name.
+            item(Some("demo202"), "Hidden by code"),
+            item(Some("Hidden Demo Studies"), "Hidden by name"),
+            // DEMO202 or DEMO203: it could be the hidden one.
+            item(Some("DEMO20"), "Ambiguous"),
+        ]))
+        .unwrap();
+    let titles = |plan: Option<StoredStudyPlan>| -> Vec<String> {
+        plan.unwrap()
+            .plan
+            .items
+            .into_iter()
+            .map(|item| item.title)
+            .collect()
+    };
+    // Nothing hidden yet: all of it.
+    assert_eq!(titles(store.latest_visible_study_plan().unwrap()).len(), 8);
+
+    store.set_course_hidden(&hidden_id, true).unwrap();
+    assert_eq!(
+        titles(store.latest_visible_study_plan().unwrap()),
+        [
+            "Visible by id",
+            "Visible by code",
+            "No course",
+            "Unknown course"
+        ]
+    );
+    // The student's own screens still show every item.
+    assert_eq!(titles(store.latest_study_plan().unwrap()).len(), 8);
+}
+
+#[test]
+fn a_removed_course_s_plan_items_are_hidden_by_id_name_or_code() {
+    let store = demo_store();
+    for (external, code, name) in [
+        ("202", "DEMO 202", "Removed Demo Studies"),
+        ("303", "DEMO303", "Another Demo Seminar"),
+    ] {
+        store
+            .upsert_course(&course(external, Some(code), name))
+            .unwrap();
+    }
+    let item = |course: &str, title: &str| StudyPlanItem {
+        course_id: Some(course.to_string()),
+        ..plan_item(title)
+    };
+    store
+        .save_study_plan(&plan(vec![
+            item(&course_id("101"), "Current by id"),
+            item(&course_id("202"), "Removed by id"),
+            item("demo202", "Removed by code"),
+            item("Removed Demo Studies", "Removed by name"),
+            item("DEMO303", "Current by code"),
+        ]))
+        .unwrap();
+    store
+        .remove_course(
+            &course_id("202"),
+            pagelamp_core::removal::RemovalReason::Ended,
+            false,
+            false,
+            Utc::now(),
+        )
+        .unwrap();
+    let titles = |plan: Option<StoredStudyPlan>| -> Vec<String> {
+        plan.unwrap()
+            .plan
+            .items
+            .into_iter()
+            .map(|item| item.title)
+            .collect()
+    };
+    for plan in [
+        store.latest_study_plan().unwrap(),
+        store.latest_visible_study_plan().unwrap(),
+    ] {
+        assert_eq!(titles(plan), ["Current by id", "Current by code"]);
+    }
+
+    // Ticking counts the items as shown: index 1 is DEMO303's, whatever the stored order.
+    let id = store.latest_study_plan().unwrap().unwrap().id;
+    let ticked = store.set_study_plan_item_done(id, 1, true).unwrap();
+    let shown: Vec<(&str, bool)> = ticked
+        .plan
+        .items
+        .iter()
+        .map(|item| (item.title.as_str(), item.done))
+        .collect();
+    assert_eq!(shown, [("Current by id", false), ("Current by code", true)]);
+
+    // A course PageLamp still has decides before a removed one with the same code.
+    store
+        .upsert_course(&course("204", Some("DEMO202"), "Demo Studies again"))
+        .unwrap();
+    assert_eq!(
+        titles(store.latest_study_plan().unwrap()),
+        ["Current by id", "Removed by code", "Current by code"]
+    );
+}
+
+#[test]
+fn an_ai_app_s_edit_keeps_the_items_it_could_not_see() {
+    let store = demo_store();
+    store
+        .upsert_course(&course("202", Some("DEMO202"), "Hidden Demo Studies"))
+        .unwrap();
+    let item = |course: &str, title: &str, day: &str| StudyPlanItem {
+        course_id: Some(course.to_string()),
+        date: date(day),
+        ..plan_item(title)
+    };
+    store
+        .save_study_plan(&plan(vec![
+            item(&course_id("101"), "Read chapter 1", "2026-09-28"),
+            item("DEMO202", "Hidden course item", "2026-09-29"),
+        ]))
+        .unwrap();
+    store.set_course_hidden(&course_id("202"), true).unwrap();
+
+    // The app sees one item and sends back an edit of it: the hidden one stays, in date order.
+    let seen = store.latest_visible_study_plan().unwrap().unwrap();
+    assert_eq!(seen.plan.items.len(), 1);
+    let mut edited = seen.plan.clone();
+    edited.items[0].title = "Read chapter 1 and 2".into();
+    edited
+        .items
+        .push(item(&course_id("101"), "Quiz yourself", "2026-09-30"));
+    store.save_study_plan_keeping_unseen(&edited).unwrap();
+    let stored: Vec<String> = store
+        .latest_study_plan()
+        .unwrap()
+        .unwrap()
+        .plan
+        .items
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    assert_eq!(
+        stored,
+        [
+            "Read chapter 1 and 2",
+            "Hidden course item",
+            "Quiz yourself"
+        ]
+    );
+    let seen = store.latest_visible_study_plan().unwrap().unwrap();
+    assert_eq!(seen.plan.items.len(), 2);
+
+    // Nothing hidden: the plan is saved as sent.
+    store.set_course_hidden(&course_id("202"), false).unwrap();
+    let only = plan(vec![item(&course_id("101"), "Only this", "2026-09-28")]);
+    store.save_study_plan_keeping_unseen(&only).unwrap();
+    assert_eq!(
+        store.latest_study_plan().unwrap().unwrap().plan.items.len(),
+        1
+    );
+    // And the limits apply to what was sent.
+    let empty_title = plan(vec![item(&course_id("101"), " ", "2026-09-28")]);
+    assert!(matches!(
+        store.save_study_plan_keeping_unseen(&empty_title),
+        Err(Error::Invalid(_))
+    ));
+}
+
+#[test]
 fn save_study_plan_validation() {
     let store = demo_store();
     let invalid = |plan: StudyPlan| {

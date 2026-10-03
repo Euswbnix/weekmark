@@ -1,0 +1,16 @@
+{
+  "explain": {
+    "generate": "讲解第 {{week}} 周",
+    "generateRecent": "讲解最近的资料",
+    "writeAgain": "重新生成",
+    "includeOne": "不是计分作业？纳入它并重新生成",
+    "includeSeveral": "不是计分作业？纳入这 {{count}} 份并重新生成",
+    "turnedOff": "这门课的 AI 访问已关闭，所以无法讲解。",
+    "leaveHint": "切换到这门课的其他部分不会中断；离开这门课程会停止生成，不会保存任何内容。",
+    "showFrom": "显示 {{when}} 的讲解",
+    "reason": "（{{reason}}）"
+  },
+  "actions": {
+    "courseMaterials": "课程资料…"
+  }
+}

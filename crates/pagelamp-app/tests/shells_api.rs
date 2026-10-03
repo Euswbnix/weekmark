@@ -1,11 +1,13 @@
-//! What's new per shell: the desktop app and the Mac app share one data folder, and each has
-//! its own What's new; only the desktop app's counts as the update disclosure.
+//! Per shell: the desktop app and the Mac app share one data folder. Each has its own What's
+//! new (only the desktop app's counts as the update disclosure) and its own "Remind me" answer
+//! (`ReminderSettings::run_in_background`: the desktop's tray and login item, the Mac app's
+//! notification consent); the other reminder settings are shared.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use pagelamp_app::{App, Shell, WhatsNewTopic};
+use pagelamp_app::{App, ReminderSettings, Shell, WhatsNewTopic};
 use pagelamp_core::secrets::MemorySecrets;
 use pagelamp_core::store::Store;
 
@@ -125,4 +127,77 @@ fn each_shell_acknowledges_only_its_own_whats_new() {
             .is_none()
     );
     assert!(open(&data).startup_tasks(now).unwrap().whats_new.is_none());
+}
+
+/// Consent given in the Mac app never gives the desktop app a tray and a login item, and the
+/// other way round; every other reminder setting is shared.
+#[test]
+fn each_shell_has_its_own_remind_me_answer() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = data_dir(&temp);
+    let desktop = open(&data);
+    let mac = open_mac(&data);
+    assert!(!desktop.reminder_settings().unwrap().run_in_background);
+    assert!(!mac.reminder_settings().unwrap().run_in_background);
+
+    // The Mac app says "Remind me" and changes a shared field.
+    mac.set_reminder_settings(&ReminderSettings {
+        run_in_background: true,
+        digest_time: "18:30".into(),
+        ..ReminderSettings::default()
+    })
+    .unwrap();
+    let seen = desktop.reminder_settings().unwrap();
+    assert!(
+        !seen.run_in_background,
+        "no tray or login item on the desktop"
+    );
+    assert_eq!(seen.digest_time, "18:30", "shared");
+    assert!(mac.reminder_settings().unwrap().run_in_background);
+
+    // The desktop app says "Remind me" too, then turns it off: the Mac app's answer stays.
+    desktop
+        .set_reminder_settings(&ReminderSettings {
+            run_in_background: true,
+            plan_today: true,
+            ..seen.clone()
+        })
+        .unwrap();
+    assert!(desktop.reminder_settings().unwrap().run_in_background);
+    let mac_seen = mac.reminder_settings().unwrap();
+    assert!(mac_seen.run_in_background && mac_seen.plan_today);
+    desktop
+        .set_reminder_settings(&ReminderSettings {
+            run_in_background: false,
+            ..desktop.reminder_settings().unwrap()
+        })
+        .unwrap();
+    assert!(mac.reminder_settings().unwrap().run_in_background);
+
+    // The Mac app turns its consent off: the desktop's answer is untouched by that too.
+    desktop
+        .set_reminder_settings(&ReminderSettings {
+            run_in_background: true,
+            ..desktop.reminder_settings().unwrap()
+        })
+        .unwrap();
+    mac.set_reminder_settings(&ReminderSettings {
+        run_in_background: false,
+        ..mac.reminder_settings().unwrap()
+    })
+    .unwrap();
+    assert!(desktop.reminder_settings().unwrap().run_in_background);
+    assert!(!mac.reminder_settings().unwrap().run_in_background);
+    let (d, m) = (
+        desktop.reminder_settings().unwrap(),
+        mac.reminder_settings().unwrap(),
+    );
+    assert_eq!(
+        ReminderSettings {
+            run_in_background: false,
+            ..d
+        },
+        m,
+        "every other field is shared"
+    );
 }

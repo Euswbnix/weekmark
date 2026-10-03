@@ -104,6 +104,8 @@ const BLOCK_REASON_SET: Record<BlockReason, true> = {
   price_unknown_not_acknowledged: true,
   weekly_run_cap_reached: true,
   backend_disabled_in_this_build: true,
+  nothing_to_write: true,
+  no_course_to_plan: true,
 };
 export const BLOCK_REASONS = Object.keys(BLOCK_REASON_SET) as BlockReason[];
 

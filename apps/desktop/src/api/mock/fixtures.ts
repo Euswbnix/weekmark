@@ -46,6 +46,7 @@ export type MockScenario =
   | "update-available"
   | "upgrader"
   | "upgrader-from-01"
+  | "upgrader-from-alpha1"
   | "updated"
   | "deb"
   // The file reader (extraction worker) is blocked, e.g. by antivirus (M0.5).
@@ -81,7 +82,12 @@ export type MockScenario =
   // Removal (F2): some courses already removed, one waiting to be purged.
   | "removed"
   // Calendar proposals (F3): an AI proposal with a conflict, a scan proposal, a stale calendar.
-  | "proposals";
+  | "proposals"
+  // Reminders (M3): a deadline, the weekly digest and today's plan are due / running in the
+  // background is on, but this system has no tray (Linux without an AppIndicator library).
+  | "reminders-due"
+  | "weekly-note-monday"
+  | "reminders-no-tray";
 
 export const MOCK_SCENARIOS: readonly MockScenario[] = [
   "demo",
@@ -93,6 +99,7 @@ export const MOCK_SCENARIOS: readonly MockScenario[] = [
   "update-available",
   "upgrader",
   "upgrader-from-01",
+  "upgrader-from-alpha1",
   "updated",
   "deb",
   "worker-blocked",
@@ -116,6 +123,9 @@ export const MOCK_SCENARIOS: readonly MockScenario[] = [
   "all-past",
   "removed",
   "proposals",
+  "reminders-due",
+  "weekly-note-monday",
+  "reminders-no-tray",
 ];
 
 /** The version mock mode reports (a pre-release, so its default update channel is beta). */
@@ -487,13 +497,15 @@ function demo101(now: Date): MockCourse {
       module: m4,
       chunks: 32,
     }),
+    // Looks like graded work: left out of an explanation unless the student includes it (then
+    // it is the week's second readable material, so the mock's two-material limit reads it).
+    material(c.id, "Assignment 4 — Survey Simulation", "file", 4, -2, now, {
+      module: m4,
+      chunks: 15,
+    }),
     material(c.id, "Reading: Chapter 4, Who Gets Asked", "file", 4, -2, now, {
       module: m4,
       chunks: 18,
-    }),
-    material(c.id, "Lab 4 notebook — Survey Simulation", "file", 4, -2, now, {
-      module: m4,
-      chunks: 15,
     }),
     material(c.id, "Survey dataset (large archive)", "file", 4, -2, now, {
       module: m4,
@@ -682,6 +694,7 @@ function studyPlan(now: Date, courses: MockCourse[]): StoredStudyPlan {
   return {
     id: 1,
     created_at: at(now, -2, 20, 15),
+    origin: "ai_app",
     plan: {
       horizon_start: dateOnly(now, -1),
       horizon_end: dateOnly(now, 12),

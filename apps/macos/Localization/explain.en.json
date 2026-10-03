@@ -1,0 +1,16 @@
+{
+  "explain": {
+    "generate": "Explain Week {{week}}",
+    "generateRecent": "Explain the Recent Materials",
+    "writeAgain": "Write Again",
+    "includeOne": "Not Graded Work? Include It and Write Again",
+    "includeSeveral": "Not Graded Work? Include These {{count}} and Write Again",
+    "turnedOff": "AI access is off for this course, so its weeks can't be explained.",
+    "leaveHint": "Switching to another section keeps it going; leaving this course stops it, and nothing is saved.",
+    "showFrom": "Show the explanation from {{when}}",
+    "reason": " ({{reason}})"
+  },
+  "actions": {
+    "courseMaterials": "Course Materials…"
+  }
+}

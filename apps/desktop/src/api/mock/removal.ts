@@ -341,5 +341,10 @@ export function createLifecycleMock(deps: {
       }),
   };
 
-  return { api, lifecycleOf, removedCount: () => removed.length };
+  return {
+    api,
+    lifecycleOf,
+    removedCount: () => removed.length,
+    removedIds: () => removed.map((r) => r.course.course.id),
+  };
 }

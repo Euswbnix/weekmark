@@ -9,6 +9,7 @@ function stored(createdAt: Date, horizonEnd: string): StoredStudyPlan {
   return {
     id: 1,
     created_at: createdAt.toISOString(),
+    origin: "ai_app",
     plan: { horizon_start: "2026-09-20", horizon_end: horizonEnd, items: [] },
   };
 }

@@ -107,7 +107,8 @@ struct ThisWeekSectionsTests {
                     )
                 },
                 notes: nil
-            )
+            ),
+            origin: .aiApp
         )
     }
 

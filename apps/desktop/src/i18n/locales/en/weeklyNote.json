@@ -1,0 +1,57 @@
+{
+  "title": "Weekly note",
+  "empty": "A few sentences on your week and the three things to focus on, from your courses' structure and your plan. No material text is sent.",
+  "write": "Write my weekly note",
+  "writeAgain": "Write a new note",
+  "weekOf": "For the week of {{date}}",
+  "automatic": "Prepared on Monday",
+  "earlierWeek": "This note is for an earlier week.",
+  "regionLabel": "Weekly note for the week of {{date}}",
+  "focusTitle": "Focus this week",
+  "gradedLeftOut_one": "{{count}} focus item was left out because it looked like an answer to graded work.",
+  "gradedLeftOut_other": "{{count}} focus items were left out because they looked like answers to graded work.",
+  "copy": "Copy",
+  "delete": "Delete…",
+  "deleteTitle": "Delete this note?",
+  "deleteBody": "The note is deleted from this computer. There is no undo.",
+  "deleteConfirm": "Delete",
+  "deleted": "Note deleted.",
+  "deleteFailed": "The note couldn't be deleted.",
+  "automaticProblem": "Monday's note wasn't prepared: {{reason}}",
+  "history": {
+    "title": "Earlier notes",
+    "show": "Show",
+    "showing": "Showing"
+  },
+  "running": {
+    "starting": "Starting…",
+    "withModel": "Writing with {{backend}} · {{model}}",
+    "automatic": "Preparing Monday's note",
+    "stage": {
+      "building_context": "Gathering your week",
+      "waiting_for_model": "Waiting for the model",
+      "validating": "Checking the note",
+      "repairing": "Fixing the answer's format",
+      "scheduling": "Arranging the note"
+    },
+    "stop": "Stop",
+    "stopping": "Stopping…",
+    "writingNow": "Writing your note",
+    "leaveHint": "Leaving this page doesn't stop it; the note is saved when it's done."
+  },
+  "result": {
+    "done": "Your weekly note is ready.",
+    "stopped": "Stopped. Nothing was saved.",
+    "failed": "The note couldn't be written."
+  },
+  "settings": {
+    "title": "Weekly note",
+    "prepare": "Prepare my weekly note when I open PageLamp on Monday",
+    "costKey": "With {{backend}} · {{model}}: {{cost}} each Monday, counted toward your monthly budget.",
+    "costLocal": "With {{backend}} · {{model}}, on this computer.",
+    "costUnpriced": "With {{backend}} · {{model}}, counted toward your monthly budget (no price for this model).",
+    "costWeekEmpty": "With {{backend}} · {{model}}, counted toward your monthly budget (what it costs depends on the week).",
+    "paused": "Paused: the weekly note's model is no longer an API key or a model on this computer.",
+    "saveFailed": "The setting couldn't be saved."
+  }
+}

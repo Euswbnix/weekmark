@@ -75,13 +75,17 @@ struct ThisWeekEmptyPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if model.lastCrash != nil || !model.failingSources.isEmpty {
+            if model.lastCrash != nil || !model.failingSources.isEmpty || hasReminderNotes {
                 ReadingColumn {
                     if let crash = model.lastCrash {
                         CrashNotice(crash: crash)
                     }
                     if !model.failingSources.isEmpty {
                         ThisWeekSourceProblems()
+                    }
+                    RemindersCatchUp()
+                    if state == .firstSync {
+                        RemindMeQuestion()
                     }
                 }
                 .padding(.top, PLSpace.s6)
@@ -104,6 +108,13 @@ struct ThisWeekEmptyPage: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minHeight: PLSize.windowMainMinHeight)
+    }
+
+    /// The catch-up card, or "Remind me" while the first sync runs.
+    private var hasReminderNotes: Bool {
+        guard let delivery = model.reminderDelivery else { return false }
+        return !delivery.catchUp.isEmpty
+            || (state == .firstSync && (delivery.consent == false || delivery.questionAnswer != nil))
     }
 
     /// The lamp stays unlit until there is something to light (spec §4.5); errors never glow.

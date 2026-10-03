@@ -39,12 +39,14 @@ use rusqlite::{
 };
 
 use crate::model::*;
+use crate::removal::Tombstone;
 use crate::{Error, Result};
 
 mod ai;
 mod calendars;
 mod generations;
 mod migrate_v4;
+mod reminders;
 mod tombstones;
 
 pub use ai::USAGE_KEEP_DAYS;
@@ -54,6 +56,7 @@ pub use calendars::{
 };
 pub use generations::{GenerationRecord, GenerationStatus, KEEP_GENERATIONS};
 pub use migrate_v4::{COURSE_DATES_CONFIRMED, MIGRATED_FINGERPRINT};
+pub use reminders::REMINDERS_SHOWN_DAYS;
 
 pub const SCHEMA_VERSION: i64 = 4;
 
@@ -940,52 +943,22 @@ impl Store {
     /// with an exact id). The query is trimmed first; an empty query is `NotFound`.
     pub fn resolve_course_with(&self, query: &str, include_hidden: bool) -> Result<Course> {
         let courses = self.list_courses(include_hidden)?;
+        let keys: Vec<CourseKey> = courses.iter().map(CourseKey::of_course).collect();
         let query = query.trim();
-        if query.is_empty() {
-            return Err(course_not_found(query, &courses));
+        match match_course(query, &keys) {
+            CourseMatch::One(index) => Ok(courses[index].clone()),
+            CourseMatch::Several(found) => Err(Error::Ambiguous {
+                query: query.to_string(),
+                candidates: found
+                    .iter()
+                    .map(|&index| {
+                        let course = &courses[index];
+                        format!("{} (id: {})", course.display_name(), course.id)
+                    })
+                    .collect(),
+            }),
+            CourseMatch::None => Err(course_not_found(query, &courses)),
         }
-
-        // 1. Exact id, or exact display name ("DEMO101 — Intro…", as shown everywhere).
-        if let Some(course) = courses.iter().find(|c| c.id == query) {
-            return Ok(course.clone());
-        }
-        let by_display: Vec<&Course> = courses
-            .iter()
-            .filter(|c| c.display_name().eq_ignore_ascii_case(query))
-            .collect();
-        if let Some(result) = pick_course(query, by_display) {
-            return result;
-        }
-
-        // 2. Exact code, 3. code prefix — both case-insensitive and ignoring spaces.
-        let wanted_code = normalise_code(query);
-        let code_of = |c: &Course| c.code.as_deref().map(normalise_code);
-        let exact_code: Vec<&Course> = courses
-            .iter()
-            .filter(|c| code_of(c).is_some_and(|code| code == wanted_code))
-            .collect();
-        if let Some(result) = pick_course(query, exact_code) {
-            return result;
-        }
-        let code_prefix: Vec<&Course> = courses
-            .iter()
-            .filter(|c| code_of(c).is_some_and(|code| code.starts_with(&wanted_code)))
-            .collect();
-        if let Some(result) = pick_course(query, code_prefix) {
-            return result;
-        }
-
-        // 4. Case-insensitive substring of the name.
-        let wanted_name = query.to_lowercase();
-        let by_name: Vec<&Course> = courses
-            .iter()
-            .filter(|c| c.name.to_lowercase().contains(&wanted_name))
-            .collect();
-        if let Some(result) = pick_course(query, by_name) {
-            return result;
-        }
-
-        Err(course_not_found(query, &courses))
     }
 
     /// Record which courses of `source_id` the LMS still lists as active: those in `active`
@@ -1613,7 +1586,30 @@ impl Store {
     /// Plans are written by AI clients over MCP, so storage is bounded: only the newest
     /// `MAX_STORED_STUDY_PLANS` plans are kept (older ones are deleted in the same step).
     pub fn save_study_plan(&self, plan: &StudyPlan) -> Result<StoredStudyPlan> {
+        self.save_study_plan_as(plan, PlanOrigin::AiApp, None, None)
+    }
+
+    /// `save_study_plan` with its origin: a plan PageLamp generated is saved with the run's id
+    /// and its AI label.
+    pub fn save_study_plan_as(
+        &self,
+        plan: &StudyPlan,
+        origin: PlanOrigin,
+        generation_id: Option<&str>,
+        ai_label: Option<&crate::term::AiLabel>,
+    ) -> Result<StoredStudyPlan> {
         validate_study_plan(plan)?;
+        self.insert_study_plan(plan, origin, generation_id, ai_label)
+    }
+
+    /// Store a checked plan (`save_study_plan_as`); the size limit applies to what is stored.
+    fn insert_study_plan(
+        &self,
+        plan: &StudyPlan,
+        origin: PlanOrigin,
+        generation_id: Option<&str>,
+        ai_label: Option<&crate::term::AiLabel>,
+    ) -> Result<StoredStudyPlan> {
         let plan_json = serde_json::to_string(plan)?;
         // The per-field limits count characters, but JSON can make text up to 6× longer
         // (a control character becomes "\u0001"), so the total size is checked as well.
@@ -1627,8 +1623,16 @@ impl Store {
         let created_at = Utc::now().trunc_subsecs(0);
         let id = self.atomic(|| {
             self.conn.execute(
-                "INSERT INTO study_plans (created_at, plan_json) VALUES (?1, ?2)",
-                params![ts_text(created_at), plan_json],
+                "INSERT INTO study_plans (created_at, plan_json, origin, generation_id,
+                                          ai_label_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    ts_text(created_at),
+                    plan_json,
+                    origin.as_str(),
+                    generation_id,
+                    ai_label.map(serde_json::to_string).transpose()?
+                ],
             )?;
             let id = self.conn.last_insert_rowid();
             self.conn.execute(
@@ -1642,41 +1646,179 @@ impl Store {
             id,
             created_at,
             plan: plan.clone(),
+            origin,
+            generation_id: generation_id.map(str::to_string),
+            ai_label: ai_label.cloned(),
         })
     }
 
     /// The most recently saved plan (highest id), without the items of removed courses: the
-    /// stored JSON keeps them (calendar design §8.3), every reader (the app, the MCP server,
-    /// the digest, the weekly note) leaves them out. A write by item index must read the
-    /// stored plan itself.
+    /// stored JSON keeps them (calendar design §8.3), so they are hidden while PageLamp remembers
+    /// the removal. An item names its course by id, name or code (`plan_item_courses`). The
+    /// student's Plan screen reads this; what else reads the plan uses
+    /// `latest_visible_study_plan`. A write by item index must read the stored plan itself.
     pub fn latest_study_plan(&self) -> Result<Option<StoredStudyPlan>> {
+        self.latest_study_plan_without(|course| course == ItemCourse::Removed)
+    }
+
+    /// `latest_study_plan` without hidden courses' items either: what a model reads (the weekly
+    /// note's context, the MCP tool), and the digest and reminders, since a hidden course is
+    /// left out of all of them (design §4.1). The Plan screen keeps showing the plan as the
+    /// student made it.
+    pub fn latest_visible_study_plan(&self) -> Result<Option<StoredStudyPlan>> {
+        self.latest_study_plan_without(|course| course != ItemCourse::Visible)
+    }
+
+    fn latest_study_plan_without(
+        &self,
+        left_out: impl Fn(ItemCourse) -> bool,
+    ) -> Result<Option<StoredStudyPlan>> {
+        let Some(mut stored) = self.stored_study_plan(None)? else {
+            return Ok(None);
+        };
+        let courses = self.plan_item_courses(&stored.plan.items)?;
+        let mut courses = courses.into_iter();
+        stored
+            .plan
+            .items
+            .retain(|_| !courses.next().is_some_and(&left_out));
+        Ok(Some(stored))
+    }
+
+    /// Save a plan an AI app wrote after reading `latest_visible_study_plan`: the previous plan's
+    /// items it couldn't see (hidden and removed courses') are kept in the new one, dated as
+    /// they were, so an edit never deletes them. The limits apply to the plan as sent.
+    pub fn save_study_plan_keeping_unseen(&self, plan: &StudyPlan) -> Result<StoredStudyPlan> {
+        validate_study_plan(plan)?;
+        self.atomic(|| {
+            let Some(previous) = self.stored_study_plan(None)? else {
+                return self.save_study_plan(plan);
+            };
+            let courses = self.plan_item_courses(&previous.plan.items)?;
+            let unseen: Vec<StudyPlanItem> = previous
+                .plan
+                .items
+                .into_iter()
+                .zip(courses)
+                .filter(|(_, course)| *course != ItemCourse::Visible)
+                .map(|(item, _)| item)
+                .collect();
+            if unseen.is_empty() {
+                return self.save_study_plan(plan);
+            }
+            let mut kept = plan.clone();
+            kept.items.extend(unseen);
+            // In date order, the plan's own order kept within a day.
+            kept.items.sort_by_key(|item| item.date);
+            self.insert_study_plan(&kept, PlanOrigin::AiApp, None, None)
+        })
+    }
+
+    /// Tick item `index` of plan `plan_id` done or not. `index` counts the items as readers
+    /// see them (`latest_study_plan`: removed courses' items left out); the stored plan keeps
+    /// the others. Returns the plan as readers see it. `NotFound` for an unknown plan or item.
+    pub fn set_study_plan_item_done(
+        &self,
+        plan_id: i64,
+        index: u32,
+        done: bool,
+    ) -> Result<StoredStudyPlan> {
+        self.atomic(|| {
+            let mut stored = self
+                .stored_study_plan(Some(plan_id))?
+                .ok_or_else(|| Error::NotFound(format!("study plan {plan_id}")))?;
+            let removed: Vec<bool> = self
+                .plan_item_courses(&stored.plan.items)?
+                .into_iter()
+                .map(|course| course == ItemCourse::Removed)
+                .collect();
+            let at = removed
+                .iter()
+                .enumerate()
+                .filter(|(_, removed)| !**removed)
+                .nth(index as usize)
+                .map(|(at, _)| at)
+                .ok_or_else(|| Error::NotFound(format!("item {index} of study plan {plan_id}")))?;
+            stored.plan.items[at].done = done;
+            self.conn.execute(
+                "UPDATE study_plans SET plan_json = ?2 WHERE id = ?1",
+                params![plan_id, serde_json::to_string(&stored.plan)?],
+            )?;
+            let mut removed = removed.into_iter();
+            stored
+                .plan
+                .items
+                .retain(|_| !removed.next().unwrap_or(false));
+            Ok(stored)
+        })
+    }
+
+    /// The course each item names, read like `resolve_course_with` (an id, a name or a code:
+    /// an AI app writes free text). A course PageLamp still has decides first, hidden ones
+    /// included, so a removed course with the same code never hides a current course's item;
+    /// a reference several of them match counts as hidden when one of them is. Only a
+    /// reference that names none of them is checked against the removed courses. A reference
+    /// to no course at all, or no reference, is `Visible`.
+    fn plan_item_courses(&self, items: &[StudyPlanItem]) -> Result<Vec<ItemCourse>> {
+        if items.iter().all(|item| item.course_id.is_none()) {
+            return Ok(vec![ItemCourse::Visible; items.len()]);
+        }
+        let courses = self.list_courses(true)?;
+        let tombstones = self.tombstones()?;
+        let current: Vec<CourseKey> = courses.iter().map(CourseKey::of_course).collect();
+        let removed: Vec<CourseKey> = tombstones.iter().map(CourseKey::of_tombstone).collect();
+        Ok(items
+            .iter()
+            .map(|item| {
+                let Some(reference) = item.course_id.as_deref().map(str::trim) else {
+                    return ItemCourse::Visible;
+                };
+                let hidden = |index: &usize| courses[*index].hidden;
+                match match_course(reference, &current) {
+                    CourseMatch::One(index) if hidden(&index) => ItemCourse::Hidden,
+                    CourseMatch::Several(found) if found.iter().any(hidden) => ItemCourse::Hidden,
+                    CourseMatch::One(_) | CourseMatch::Several(_) => ItemCourse::Visible,
+                    CourseMatch::None => match match_course(reference, &removed) {
+                        CourseMatch::None => ItemCourse::Visible,
+                        CourseMatch::One(_) | CourseMatch::Several(_) => ItemCourse::Removed,
+                    },
+                }
+            })
+            .collect())
+    }
+
+    /// Plan `id`, or the latest (`None`), as stored.
+    fn stored_study_plan(&self, id: Option<i64>) -> Result<Option<StoredStudyPlan>> {
         let row = self.query_opt(
-            "SELECT id, created_at, plan_json FROM study_plans ORDER BY id DESC LIMIT 1",
-            [],
+            "SELECT id, created_at, plan_json, origin, generation_id, ai_label_json
+             FROM study_plans
+             WHERE ?1 IS NULL OR id = ?1 ORDER BY id DESC LIMIT 1",
+            [id],
             |row| {
                 let id: i64 = row.get("id")?;
                 let created_at: Timestamp = get_value(row, "created_at")?;
                 let plan_json: String = row.get("plan_json")?;
-                Ok((id, created_at, plan_json))
+                let origin: String = row.get("origin")?;
+                let generation_id: Option<String> = row.get("generation_id")?;
+                let ai_label: Option<String> = row.get("ai_label_json")?;
+                Ok((id, created_at, plan_json, origin, generation_id, ai_label))
             },
         )?;
-        let Some((id, created_at, plan_json)) = row else {
+        let Some((id, created_at, plan_json, origin, generation_id, ai_label)) = row else {
             return Ok(None);
         };
-        let mut plan: StudyPlan = serde_json::from_str(&plan_json)?;
-        let removed: Vec<String> =
-            self.query_list("SELECT course_id FROM course_tombstones", [], |row| {
-                row.get(0)
-            })?;
-        plan.items.retain(|item| {
-            item.course_id
-                .as_ref()
-                .is_none_or(|id| !removed.contains(id))
-        });
         Ok(Some(StoredStudyPlan {
             id,
             created_at,
-            plan,
+            plan: serde_json::from_str(&plan_json)?,
+            origin: if origin == PlanOrigin::PageLamp.as_str() {
+                PlanOrigin::PageLamp
+            } else {
+                PlanOrigin::AiApp
+            },
+            generation_id,
+            // An unreadable label only loses the label.
+            ai_label: ai_label.and_then(|json| serde_json::from_str(&json).ok()),
         }))
     }
 
@@ -2018,20 +2160,78 @@ fn normalise_code(text: &str) -> String {
         .collect()
 }
 
-/// Outcome of one `resolve_course_with` rule: `None` = no match (try the next rule),
-/// otherwise the single match or `Ambiguous`.
-fn pick_course(query: &str, matches: Vec<&Course>) -> Option<Result<Course>> {
-    match matches.as_slice() {
-        [] => None,
-        [only] => Some(Ok((*only).clone())),
-        several => Some(Err(Error::Ambiguous {
-            query: query.to_string(),
-            candidates: several
-                .iter()
-                .map(|c| format!("{} (id: {})", c.display_name(), c.id))
-                .collect(),
-        })),
+/// What a study plan item's course reference names (`plan_item_courses`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ItemCourse {
+    /// A visible course, a course PageLamp doesn't know, or none.
+    Visible,
+    Hidden,
+    Removed,
+}
+
+/// What a course reference is matched against: a course, or a removed course's tombstone.
+struct CourseKey<'a> {
+    id: &'a str,
+    code: Option<&'a str>,
+    name: &'a str,
+}
+
+impl<'a> CourseKey<'a> {
+    fn of_course(course: &'a Course) -> Self {
+        Self {
+            id: &course.id,
+            code: course.code.as_deref(),
+            name: &course.name,
+        }
     }
+
+    fn of_tombstone(tombstone: &'a Tombstone) -> Self {
+        Self {
+            id: &tombstone.course_id,
+            code: tombstone.code.as_deref(),
+            name: &tombstone.name,
+        }
+    }
+}
+
+/// Which of the keys a reference names (`match_course`).
+enum CourseMatch {
+    None,
+    One(usize),
+    Several(Vec<usize>),
+}
+
+/// `resolve_course_with`'s rules: the first rule with at least one match decides. 1. Exact id,
+/// or exact display name ("DEMO101 — Intro…", as shown everywhere); 2. exact code; 3. code
+/// prefix (codes case-insensitive and ignoring spaces); 4. a case-insensitive substring of the
+/// name. `query` is trimmed by the caller; an empty one matches nothing.
+fn match_course(query: &str, keys: &[CourseKey]) -> CourseMatch {
+    if query.is_empty() {
+        return CourseMatch::None;
+    }
+    if let Some(index) = keys.iter().position(|key| key.id == query) {
+        return CourseMatch::One(index);
+    }
+    let wanted_code = normalise_code(query);
+    let wanted_name = query.to_lowercase();
+    let code_of = |key: &CourseKey| key.code.map(normalise_code);
+    let rules: [&dyn Fn(&CourseKey) -> bool; 4] = [
+        &|key| course_display_name(key.code, key.name).eq_ignore_ascii_case(query),
+        &|key| code_of(key).is_some_and(|code| code == wanted_code),
+        &|key| code_of(key).is_some_and(|code| code.starts_with(&wanted_code)),
+        &|key| key.name.to_lowercase().contains(&wanted_name),
+    ];
+    for rule in rules {
+        let found: Vec<usize> = (0..keys.len())
+            .filter(|&index| rule(&keys[index]))
+            .collect();
+        match found.as_slice() {
+            [] => {}
+            [only] => return CourseMatch::One(*only),
+            _ => return CourseMatch::Several(found),
+        }
+    }
+    CourseMatch::None
 }
 
 fn course_not_found(query: &str, courses: &[Course]) -> Error {
@@ -2077,6 +2277,7 @@ fn fts_match_expression(query: &str) -> Option<String> {
 
 // ----- study plan validation ----------------------------------------------------------------
 
+/// Whether a plan item belongs to a removed course (readers leave it out).
 fn validate_study_plan(plan: &StudyPlan) -> Result<()> {
     if plan.horizon_start > plan.horizon_end {
         return Err(Error::Invalid(format!(

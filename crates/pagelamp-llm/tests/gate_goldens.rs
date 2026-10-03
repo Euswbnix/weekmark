@@ -5,6 +5,7 @@
 use pagelamp_core::ai::Destination;
 use pagelamp_core::ai::Effort;
 use pagelamp_core::ai_gate::{ContextBudget, PlanScope, assemble, plan_context, week_context};
+use pagelamp_core::dates::{add_days, monday_of};
 use pagelamp_core::model::*;
 use pagelamp_core::store::Store;
 use pagelamp_core::views::AsOf;
@@ -22,8 +23,11 @@ fn course(store: &Store, code: &str, canary: &str) -> String {
             external_id: code.into(),
             code: Some(code.into()),
             name: format!("{code} Demo Studies"),
-            term_start: None,
-            term_end: None,
+            // Teaching now: a plan's default scope is the active courses (calendar design §8.1).
+            // Week 3 today whatever the weekday: the Monday two weeks before this week's (14 days
+            // back would be a weekend on Saturdays and Sundays, which moves week one on).
+            term_start: Some(add_days(monday_of(AsOf::now_local().today), -14)),
+            term_end: (0..90).try_fold(AsOf::now_local().today, |d, _| d.succ_opt()),
             url: None,
             syllabus_text: None,
             lms: Default::default(),

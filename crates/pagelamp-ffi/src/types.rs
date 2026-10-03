@@ -27,11 +27,16 @@ use pagelamp_app::ai::{
     BackendProblem, BackendRef, BackendState, BudgetStatus, ChatGptPlanType, CodexLogin,
     CodexLoginMethod, CodexLoginState, CodexOutdatedAction, CodexRuntime, CodexRuntimeState,
     CodexSource, CodexStatus, CostBasis, CostEstimate, CostKind, DisclosureFacts, EstimateRequest,
-    FeatureRouting, GenEvent, GenNoticeCode, GenStage, GenerationMeta, LocalServer,
-    LocalServerKind, LoginEvent, ModeAUsage, ModelChoice, ModelInfo, ModelProviderRecord,
-    ProbeReport, ProviderPreset, ProviderWire, Recipient, RemoveAiDataReport, RetentionFact,
-    RuntimeEvent, SentData, StructuredOutputTier, SystemCodex, TokenUsage, TrainingFact, UsageRow,
+    FeatureRouting, GenEvent, GenNoticeCode, GenStage, GeneratedStudyPlan, GenerationMeta,
+    LocalServer, LocalServerKind, LoginEvent, ModeAUsage, ModelChoice, ModelInfo,
+    ModelProviderRecord, PlanLimits, PlanWarning, PlanWarningCode, ProbeReport, ProviderPreset,
+    ProviderWire, Recipient, RemoveAiDataReport, RetentionFact, RuntimeEvent, SentData,
+    StructuredOutputTier, StudyPlanRequest, SystemCodex, TokenUsage, TrainingFact, UsageRow,
     UsageSummary,
+};
+use pagelamp_app::ai::{
+    Citation, ExplainOptions, ExplanationParagraph, ExplanationSection, NoteFocus, OutputLanguage,
+    WeeklyExplanation, WeeklyNote, WeeklyNoteOptions, WeeklyNoteSettings,
 };
 use pagelamp_app::diagnostics::{
     CrashReport, DoctorReport, DoctorSource, ExtractWorkerCheck, ExtractWorkerStatus,
@@ -40,12 +45,13 @@ use pagelamp_app::diagnostics::{
 use pagelamp_app::{
     Activity, ActivityItem, ActivityKind, AppErrorKind, AppStatus, BackupInfo, BreakInput,
     CalendarBatchEvent, CalendarRunOutcome, CourseCalendarView, CourseDatesInput,
-    CourseLifecycleEntry, InstallKind, LifecycleSummary, LocalFileUse, LostAfterPurge, McpClient,
-    McpClientConfig, McpLaunch, McpNoteCode, PurgeReport, ReadCalendarOptions, RemovalPreview,
-    RemovalPreviewItem, RemovalReason, RemovalReport, RemoveOptions, RemovedCourse, RestoreFailure,
-    RestoreOutcome, SegmentInput, SourceSyncResult, StartupTasks, SyllabusOffer, SyncEvent,
-    SyncRequest, SyncSummary, TemporaryLocation, TombstoneState, UpdateChannel, UpdateCheckOutcome,
-    UpdateCheckRecord, UpdatePrefs, WhatsNew, WhatsNewTopic,
+    CourseLifecycleEntry, DayOfWeek, InstallKind, LifecycleSummary, LocalFileUse, LostAfterPurge,
+    McpClient, McpClientConfig, McpLaunch, McpNoteCode, PurgeReport, ReadCalendarOptions, Reminder,
+    ReminderKind, ReminderSettings, RemovalPreview, RemovalPreviewItem, RemovalReason,
+    RemovalReport, RemoveOptions, RemovedCourse, RestoreFailure, RestoreOutcome, SegmentInput,
+    SourceSyncResult, StartupTasks, SyllabusOffer, SyncEvent, SyncRequest, SyncSummary,
+    TemporaryLocation, TombstoneState, UpdateChannel, UpdateCheckOutcome, UpdateCheckRecord,
+    UpdatePrefs, WhatsNew, WhatsNewTopic,
 };
 use pagelamp_core::ai::{AiFeature, BlockReason, Effort, MaterialSharing, ModelErrorKind};
 use pagelamp_core::ai_gate::{ContextCourse, ContextSummary, LeftOutMaterial, LeftOutReason};
@@ -61,15 +67,16 @@ use pagelamp_core::model::{
     AiLabel, AiMaterialsState, AiPolicy, BreakKind, CalendarBreak, CalendarOrigin, CalendarStatus,
     Confidence, Course, CourseGroup, CourseLifecycle, CoursePhase, CourseTimeline, DateSpan,
     DownloadBlock, Event, EventKind, EvidenceCode, EvidenceItem, EvidenceParam, EvidenceSignal,
-    LifecycleState, MaterialKind, Module, RejectReason, RejectedDates, SearchHit, SnoozeKind,
-    SourceErrorKind, SourceKind, SourceRecord, StoreCounts, StoredStudyPlan, StudyPlan,
+    LifecycleState, MaterialKind, Module, PlanOrigin, RejectReason, RejectedDates, SearchHit,
+    SnoozeKind, SourceErrorKind, SourceKind, SourceRecord, StoreCounts, StoredStudyPlan, StudyPlan,
     StudyPlanItem, TeachingSegment, TermAnchorSource, TermResolution, TermSource, TextErrorKind,
     TextStatus,
 };
+use pagelamp_core::planner::{UnscheduledReason, UnscheduledTask};
 use pagelamp_core::source::{CourseSyncSummary, SyncStage};
 use pagelamp_core::views::{
-    CourseCounts, CourseOverview, CourseSummary, Deadline, MaterialView, TextProblem,
-    WeekMaterials, WeekNoteKind,
+    CourseCounts, CourseOverview, CourseSummary, Deadline, DigestCourse, DigestPlan, MaterialView,
+    TextProblem, WeekMaterials, WeekNoteKind, WeeklyDigest,
 };
 
 use crate::PageLampError;
@@ -565,6 +572,8 @@ pub struct CourseLifecycle {
     pub evidence_items: Vec<EvidenceItem>,
     pub suggest_removal: bool,
     pub kept_current_until: Option<IsoDate>,
+    #[uniffi(default)]
+    pub is_active: bool,
 }
 
 #[uniffi::remote(Record)]
@@ -600,11 +609,22 @@ pub struct StudyPlan {
     pub notes: Option<String>,
 }
 
+#[uniffi::remote(Enum)]
+pub enum PlanOrigin {
+    AiApp,
+    PageLamp,
+}
+
 #[uniffi::remote(Record)]
 pub struct StoredStudyPlan {
     pub id: i64,
     pub created_at: Timestamp,
     pub plan: StudyPlan,
+    pub origin: PlanOrigin,
+    #[uniffi(default)]
+    pub generation_id: Option<String>,
+    #[uniffi(default)]
+    pub ai_label: Option<AiLabel>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -999,6 +1019,8 @@ pub enum WhatsNewTopic {
     CourseWeeks,
     CourseRemoval,
     SyllabusReading,
+    AiWriting,
+    Reminders,
 }
 
 #[uniffi::remote(Record)]
@@ -1012,6 +1034,252 @@ pub struct StartupTasks {
     pub whats_new: Option<WhatsNew>,
     pub update_check_due: bool,
     pub updated_from: Option<String>,
+    #[uniffi(default)]
+    pub due_reminders: Vec<Reminder>,
+    #[uniffi(default)]
+    pub purge_due: bool,
+    #[uniffi(default)]
+    pub removed_files_waiting: u32,
+    #[uniffi(default)]
+    pub calendar_offers: Vec<SyllabusOffer>,
+    #[uniffi(default)]
+    pub calendar_offers_total: u32,
+    #[uniffi(default)]
+    pub removal_suggestions: Vec<String>,
+    #[uniffi(default)]
+    pub removal_suggestions_total: u32,
+    #[uniffi(default)]
+    pub prepare_weekly_note: bool,
+}
+
+// ----- reminders and the weekly digest (v0.3 M3) ----------------------------------------------
+
+#[uniffi::remote(Enum)]
+pub enum ReminderKind {
+    DeadlineSoon,
+    WeeklyDigest,
+    PlanToday,
+}
+
+#[uniffi::remote(Enum)]
+pub enum DayOfWeek {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
+#[uniffi::remote(Record)]
+pub struct ReminderSettings {
+    pub deadline_soon: bool,
+    pub weekly_digest: bool,
+    pub digest_day: DayOfWeek,
+    pub digest_time: String,
+    pub plan_today: bool,
+    pub plan_today_time: String,
+    pub run_in_background: bool,
+}
+
+#[uniffi::remote(Record)]
+pub struct Reminder {
+    pub id: String,
+    pub kind: ReminderKind,
+    pub local_time: String,
+    pub time_zone: String,
+    pub fire_at: Timestamp,
+    pub title: Option<String>,
+    pub course_id: Option<String>,
+    pub course_code: Option<String>,
+    pub course_name: Option<String>,
+    pub due_at: Option<Timestamp>,
+    pub hours_before: Option<u32>,
+    pub count: Option<u32>,
+}
+
+#[uniffi::remote(Record)]
+pub struct DigestCourse {
+    pub course_id: String,
+    pub code: Option<String>,
+    pub name: String,
+    pub active: bool,
+    pub week: Option<u32>,
+    pub confidence: Confidence,
+    pub phase: CoursePhase,
+    #[uniffi(default)]
+    pub current_break_kind: Option<BreakKind>,
+    #[uniffi(default)]
+    pub last_teaching_week: Option<u32>,
+    pub material_count: u32,
+    pub material_titles: Vec<String>,
+    pub deadlines: Vec<Deadline>,
+}
+
+#[uniffi::remote(Record)]
+pub struct DigestPlan {
+    pub last_week_planned: u32,
+    pub last_week_done: u32,
+    pub today: Vec<StudyPlanItem>,
+}
+
+#[uniffi::remote(Record)]
+pub struct WeeklyDigest {
+    pub generated_at: Timestamp,
+    pub courses: Vec<DigestCourse>,
+    pub plan: Option<DigestPlan>,
+}
+
+// ----- study plans (v0.3 M3) ---------------------------------------------------------------------
+
+#[uniffi::remote(Record)]
+pub struct PlanLimits {
+    pub min_horizon_days: u32,
+    pub max_horizon_days: u32,
+    pub default_horizon_days: u32,
+    pub min_hours_per_week: u32,
+    pub max_hours_per_week: u32,
+    pub default_hours_per_week: u32,
+    pub student_note_max_chars: u32,
+}
+
+#[uniffi::remote(Record)]
+pub struct StudyPlanRequest {
+    #[uniffi(default)]
+    pub horizon_days: Option<u32>,
+    #[uniffi(default)]
+    pub hours_per_week: Option<u32>,
+    #[uniffi(default)]
+    pub days_off: Vec<DayOfWeek>,
+    #[uniffi(default)]
+    pub courses: Vec<String>,
+    #[uniffi(default)]
+    pub note: Option<String>,
+    #[uniffi(default)]
+    pub override_budget: bool,
+}
+
+#[uniffi::remote(Enum)]
+pub enum UnscheduledReason {
+    OutsideHorizon,
+    NoStudyDays,
+    NoTimeBeforeLatest,
+    TooManyItems,
+}
+
+#[uniffi::remote(Record)]
+pub struct UnscheduledTask {
+    pub title: String,
+    pub course_id: Option<String>,
+    pub reason: UnscheduledReason,
+}
+
+#[uniffi::remote(Enum)]
+pub enum PlanWarningCode {
+    GradedWorkLeftOut,
+    UnknownMaterialsDropped,
+}
+
+#[uniffi::remote(Record)]
+pub struct PlanWarning {
+    pub code: PlanWarningCode,
+    pub count: u32,
+}
+
+#[uniffi::remote(Record)]
+pub struct GeneratedStudyPlan {
+    pub meta: GenerationMeta,
+    pub plan: StudyPlan,
+    pub unscheduled: Vec<UnscheduledTask>,
+    pub warnings: Vec<PlanWarning>,
+}
+
+// ----- weekly explanations (v0.3 M3) -------------------------------------------------------------
+
+#[uniffi::remote(Enum)]
+pub enum OutputLanguage {
+    Ui,
+    Course,
+}
+
+#[uniffi::remote(Record)]
+pub struct ExplainOptions {
+    #[uniffi(default)]
+    pub include: Vec<String>,
+    #[uniffi(default)]
+    pub ui_language: Option<String>,
+    #[uniffi(default)]
+    pub override_budget: bool,
+}
+
+#[uniffi::remote(Record)]
+pub struct Citation {
+    pub handle: String,
+    pub material_id: String,
+    pub title: String,
+    pub locator: Option<String>,
+    pub url: Option<String>,
+}
+
+#[uniffi::remote(Record)]
+pub struct ExplanationParagraph {
+    pub text: String,
+    pub citations: Vec<Citation>,
+}
+
+#[uniffi::remote(Record)]
+pub struct ExplanationSection {
+    pub heading: String,
+    pub paragraphs: Vec<ExplanationParagraph>,
+}
+
+#[uniffi::remote(Record)]
+pub struct WeeklyExplanation {
+    pub meta: GenerationMeta,
+    pub course_id: String,
+    pub week: Option<u32>,
+    pub sections: Vec<ExplanationSection>,
+    pub check_questions: Vec<String>,
+    pub left_out: Vec<LeftOutMaterial>,
+    pub stale: bool,
+    pub sharing_reminder: bool,
+    pub dropped_citations: u32,
+    pub cite_ai_use: bool,
+}
+
+// ----- the weekly note (beta.2) ------------------------------------------------------------------
+
+#[uniffi::remote(Record)]
+pub struct WeeklyNoteOptions {
+    #[uniffi(default)]
+    pub ui_language: Option<String>,
+    #[uniffi(default)]
+    pub override_budget: bool,
+    #[uniffi(default)]
+    pub automatic: bool,
+}
+
+#[uniffi::remote(Record)]
+pub struct NoteFocus {
+    pub text: String,
+    pub course_id: Option<String>,
+}
+
+#[uniffi::remote(Record)]
+pub struct WeeklyNote {
+    pub meta: GenerationMeta,
+    pub week_of: IsoDate,
+    pub text: String,
+    pub focus: Vec<NoteFocus>,
+    pub automatic: bool,
+    pub graded_work_left_out: u32,
+}
+
+#[uniffi::remote(Record)]
+pub struct WeeklyNoteSettings {
+    pub prepare_on_monday: bool,
+    pub prepare_on_monday_allowed: bool,
 }
 
 #[uniffi::remote(Enum)]
@@ -1076,6 +1344,8 @@ pub enum BlockReason {
     PriceUnknownNotAcknowledged,
     WeeklyRunCapReached,
     BackendDisabledInThisBuild,
+    NothingToWrite,
+    NoCourseToPlan,
 }
 
 /// Why a model call failed.
@@ -1291,8 +1561,12 @@ pub enum LocalServerKind {
 #[uniffi::remote(Record)]
 pub struct LocalServer {
     pub kind: LocalServerKind,
+    #[uniffi(default)]
+    pub preset: String,
     pub base_url: String,
     pub running: bool,
+    #[uniffi(default)]
+    pub provider_id: Option<String>,
 }
 
 #[uniffi::remote(Record)]
@@ -1332,6 +1606,8 @@ pub enum EstimateRequest {
     WeeklyExplanation {
         course: String,
         week: Option<u32>,
+        #[uniffi(default)]
+        include: Vec<String>,
     },
     WeeklyNote,
     CourseCalendar {
@@ -1435,6 +1711,10 @@ pub enum GenEvent {
     Stage {
         stage: GenStage,
     },
+    Context {
+        summary: ContextSummary,
+        input_tokens: Option<u64>,
+    },
     TextDelta {
         text: String,
     },
@@ -1455,6 +1735,8 @@ pub struct GenerationMeta {
     pub feature: AiFeature,
     pub backend_label: String,
     pub model: String,
+    #[uniffi(default)]
+    pub on_device: bool,
     pub created_at: Timestamp,
     pub usage: TokenUsage,
     pub est_cost_micro_usd: Option<u64>,
@@ -1483,6 +1765,8 @@ pub struct LeftOutMaterial {
     pub material_id: String,
     pub title: String,
     pub reason: LeftOutReason,
+    #[uniffi(default)]
+    pub includable: bool,
 }
 
 #[uniffi::remote(Enum)]

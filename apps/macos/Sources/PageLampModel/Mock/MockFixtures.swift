@@ -20,6 +20,22 @@ public enum MockScenario: String, CaseIterable, Codable, Sendable {
     case busy
     /// The demo after a crash of the MCP server (S6).
     case crashed
+    /// AI (the Tauri mock's scenarios): an OpenAI key set up and acknowledged, a model per feature,
+    /// this month's and last month's usage.
+    case aiKey
+    /// A model on this computer (Ollama).
+    case aiLocal
+    /// Like aiKey, but explanations use a model without a known price.
+    case aiUnpriced
+    /// Like aiKey, but this month's usage has almost reached the budget.
+    case aiBudget
+    /// An Anthropic key whose disclosure changed since it was acknowledged.
+    case aiDisclosureChanged
+    /// A custom endpoint that can't be reached (listing models fails; "Test" is rate-limited).
+    case aiErrors
+    /// Like aiKey, with "prepare it on Monday" on and every day a Monday (the Tauri mock's
+    /// weekly-note-monday): Monday's note is prepared once.
+    case weeklyNoteMonday
 
     /// What the preview app starts with: the demo plus a failing Canvas token, so the attention
     /// states are visible without setup.
@@ -57,8 +73,8 @@ struct MockCourse: Sendable {
 }
 
 /// The course calendar and lifecycle fields (M0.10) in neutral values: a course with a week is
-/// teaching, one without is in an unknown phase; the term is unresolved, there is no calendar, and
-/// every course is in the Current group.
+/// teaching, one without is in an unknown phase (both active); the term is unresolved, there is
+/// no calendar, and every course is in the Current group.
 enum MockCalendar {
     static var unresolvedTerm: TermResolution {
         TermResolution(
@@ -74,7 +90,9 @@ enum MockCalendar {
         return CourseLifecycle(
             state: kept || timeline.currentWeek != nil ? .current : .unknown, group: .current,
             confidence: kept ? .high : timeline.confidence, since: nil, startsOn: nil, lastActivity: nil,
-            nextEvent: nil, evidenceItems: [], suggestRemoval: false, keptCurrentUntil: keptCurrentUntil
+            nextEvent: nil, evidenceItems: [], suggestRemoval: false, keptCurrentUntil: keptCurrentUntil,
+            // The facade's rule: Current and Unknown courses are active (study plans cover them).
+            isActive: true
         )
     }
 }
@@ -92,6 +110,8 @@ struct MockDb: Sendable {
     /// "Not now" / "Keep" on removal suggestions, by course id.
     var removalSnoozes: [String: String] = [:]
     var bannerSnoozedUntil: String?
+    /// The M1–M3 state the mock keeps (AI settings, reminders, removed courses).
+    var features = MockFeatures()
 }
 
 /// Update settings and the launch state behind `startupTasks` (a fresh install by default).
@@ -364,8 +384,11 @@ struct MockFixtures {
             material(c.id, "Lab 3 notebook", .file, week: 3, published: -9, .init(chunks: 12, module: m3)),
             material(c.id, "Week 3 lecture recording", .file, week: 3, published: -8, .init(status: .unsupported, module: m3)),
             material(c.id, "Week 4 slides — Sampling and Surveys", .file, week: 4, published: -2, .init(chunks: 32, module: m4)),
+            // Looks like graded work: left out of an explanation unless the student includes it
+            // (then it is the week's second readable material, so the mock's two-material limit
+            // reads it, as in the Tauri mock).
+            material(c.id, "Assignment 4 — Survey Simulation", .file, week: 4, published: -2, .init(chunks: 15, module: m4)),
             material(c.id, "Reading: Chapter 4, Who Gets Asked", .file, week: 4, published: -2, .init(chunks: 18, module: m4)),
-            material(c.id, "Lab 4 notebook — Survey Simulation", .file, week: 4, published: -2, .init(chunks: 15, module: m4)),
             material(c.id, "Survey dataset (large archive)", .file, week: 4, published: -2, .init(status: .notDownloaded, module: m4)),
             material(c.id, "Week 4 practice questions", .page, week: 4, published: -1, .init(chunks: 3, module: m4)),
             material(
@@ -509,7 +532,8 @@ struct MockFixtures {
                     item(8, c101, "Midterm review: weeks 1–2", 90),
                 ],
                 notes: "Front-load Problem Set 2, then shift to midterm review from next week."
-            )
+            ),
+            origin: .aiApp
         )
     }
 

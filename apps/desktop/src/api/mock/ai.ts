@@ -40,6 +40,7 @@ import {
   ollamaCloudFacts,
 } from "./ai-fixtures";
 import { createMockCodex } from "./codex";
+import { liftedIncludes } from "./explain";
 import type { MockCourse, MockScenario } from "./fixtures";
 
 type AiApi = Pick<
@@ -82,6 +83,10 @@ export interface MockAiContext {
   stepMs: number;
   courses: () => MockCourse[];
   findCourse: (courseId: string) => MockCourse;
+  /** The weekly note has nothing to write about: its estimate blocks, as the facade's does. */
+  noteHasNothingToWrite: () => boolean;
+  /** The courses a study plan covers; none: its estimate blocks, as the facade's does. */
+  planCourses: (wanted: readonly string[]) => MockCourse[];
 }
 
 /** D18: US$5 soft cap, warn at 80%. */
@@ -116,12 +121,13 @@ function last4(key: string): string {
 }
 
 /** Input tokens and output limits per feature (a rough stand-in for the backend's estimator). */
-function workload(req: EstimateRequest): { input: number; output: number } {
+/** `lifted`: the included materials an explanation sends too (`liftedIncludes`). */
+function workload(req: EstimateRequest, lifted: number): { input: number; output: number } {
   switch (req.feature) {
     case "study_plan":
       return { input: 6_000 + 1_500 * req.courses.length, output: 8_000 };
     case "weekly_explanation":
-      return { input: 45_000, output: 6_000 };
+      return { input: 45_000 + 15_000 * lifted, output: 6_000 };
     case "weekly_note":
       return { input: 3_000, output: 1_500 };
     case "course_calendar":
@@ -193,6 +199,8 @@ export function createMockAi(ctx: MockAiContext): AiApi {
     case "ai-key":
     case "ai-budget":
     case "ai-unpriced":
+    // Monday's weekly note (beta.2): prepared with the student's own key.
+    case "weekly-note-monday":
     // Calendar proposals (F3): an API key, so "Read the syllabus with AI" can run in the demo.
     case "proposals": {
       record("openai", "openai", "https://api.openai.com/v1", openaiKey);
@@ -458,9 +466,24 @@ export function createMockAi(ctx: MockAiContext): AiApi {
 
     detectLocalServers: async (): Promise<LocalServer[]> => {
       await ctx.delay(300);
+      // Like the facade: the provider already added with the same preset and address.
+      const normal = (url: string) => url.replace(/\/+$/, "").replace("//localhost", "//127.0.0.1");
+      const server = (
+        preset: LocalServer["kind"],
+        base_url: string,
+        running: boolean,
+      ): LocalServer => ({
+        kind: preset,
+        preset,
+        base_url,
+        running,
+        provider_id:
+          providers.find((p) => p.preset === preset && normal(p.base_url) === normal(base_url))
+            ?.provider_id ?? null,
+      });
       return [
-        { kind: "ollama", base_url: "http://127.0.0.1:11434", running: true },
-        { kind: "lm_studio", base_url: "http://127.0.0.1:1234/v1", running: false },
+        server("ollama", "http://127.0.0.1:11434", true),
+        server("lm_studio", "http://127.0.0.1:1234/v1", false),
       ];
     },
 
@@ -544,7 +567,6 @@ export function createMockAi(ctx: MockAiContext): AiApi {
     estimateGeneration: async (req): Promise<CostEstimate> => {
       await ctx.delay();
       const choice = features.get(req.feature) ?? null;
-      const { input, output } = workload(req);
       // Like the facade (pinned in its tests/ai_api.rs): no model and the gate's blocks
       // (question (b) included) carry no amount and 0 tokens; the other blocks leave the
       // estimate complete, since only an acknowledgement or a cap stops the run.
@@ -558,6 +580,13 @@ export function createMockAi(ctx: MockAiContext): AiApi {
         would_block: reason,
       });
       if (!choice) return gateBlocked("no_model_chosen");
+      // The note's and the plan's context come next in the facade, before their other blocks.
+      if (req.feature === "weekly_note" && ctx.noteHasNothingToWrite()) {
+        return gateBlocked("nothing_to_write");
+      }
+      if (req.feature === "study_plan" && ctx.planCourses(req.courses).length === 0) {
+        return gateBlocked("no_course_to_plan");
+      }
       // A Codex routing stored while the plan was offered blocks instead of running.
       if (choice.backend.kind === "codex" && !codex.offered) {
         return gateBlocked("backend_disabled_in_this_build");
@@ -574,6 +603,17 @@ export function createMockAi(ctx: MockAiContext): AiApi {
         const gate = courseGate(course, onDevice);
         if (gate) return gateBlocked(gate);
       }
+      // An explanation's included materials count only where its run would send them.
+      const lifted =
+        req.feature === "weekly_explanation"
+          ? liftedIncludes(
+              ctx.findCourse(req.course),
+              req.week ?? null,
+              req.include ?? [],
+              ctx.now(),
+            ).length
+          : 0;
+      const { input, output } = workload(req, lifted);
 
       const status = statusOf(choice.backend);
       const reasoning = Math.max(REASONING[choice.effort], info?.reasoning_always_on ? 8_000 : 0);

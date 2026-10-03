@@ -1,0 +1,55 @@
+{
+  "settings": {
+    "title": "提醒",
+    "description": "在这台电脑上用通知提醒你截止日期和本周安排。通知里只有课程代码和标题，不会出现资料内容。",
+    "deadlineSoon": "即将到来的截止日期",
+    "deadlineSoonHint": "在截止前两天和前一天各提醒一次。",
+    "weeklyDigest": "本周概览",
+    "weeklyDigestHint": "每周一次，列出未来 7 天的截止日期。",
+    "day": "星期",
+    "time": "时间",
+    "fieldOf": "{{item}}的{{field}}",
+    "planToday": "今天的学习计划",
+    "planTodayHint": "已保存的学习计划里今天要做的事。",
+    "invalidTime": "请输入类似 09:00 的时间。",
+    "background": "让 {{product}} 常驻托盘，并在登录时启动",
+    "backgroundHint": "只有开启这一项、并且 {{product}} 在运行时才会提醒。关闭时，关闭窗口就会退出 {{product}}。",
+    "trayUnavailable": "这个系统无法显示托盘图标；安装 libayatana-appindicator3-1 即可。{{product}} 仍会在登录时启动并提醒你；再次打开它即可看到窗口。",
+    "loginItemOff": "系统设置里关闭了登录时启动，所以要在你打开 {{product}} 之后才会开始提醒。",
+    "notSeeing": "收不到提醒？请在系统的通知设置里允许 {{product}}。",
+    "openNotificationSettings": "打开通知设置",
+    "saveFailed": "提醒设置没能保存。"
+  },
+  "remind": {
+    "title": "提醒我",
+    "question": "让 {{product}} 常驻托盘并在登录时启动，以便提醒你截止日期和本周安排？",
+    "yes": "好，提醒我",
+    "no": "暂不",
+    "onDone": "{{product}} 会提醒你。可以在「设置 → 提醒」里更改。",
+    "offDone": "不提醒。可以在「设置 → 提醒」里开启。"
+  },
+  "notify": {
+    "deadlineTitle": "{{code}}：{{title}}",
+    "deadlineBody": "截止时间：{{when}}",
+    "when": "{{weekday}} {{time}}",
+    "digestTitle": "{{product}} 本周概览",
+    "digestBody_one": "未来 7 天有 {{count}} 个截止日期",
+    "digestBody_other": "未来 7 天有 {{count}} 个截止日期",
+    "digestBodyNone": "未来 7 天没有截止日期",
+    "planTitle": "今天的学习计划",
+    "planBody_one": "今天有 {{count}} 件事要做",
+    "planBody_other": "今天有 {{count}} 件事要做",
+    "onTitle": "提醒已开启",
+    "onBody": "{{product}} 会在这里提醒你截止日期和本周安排。"
+  },
+  "tray": {
+    "open": "打开 {{product}}",
+    "quit": "退出 {{product}}"
+  },
+  "catchUp": {
+    "title": "自你上次打开 {{product}} 以来",
+    "open": "打开",
+    "dismiss": "关闭",
+    "turnOn": "改为用通知提醒"
+  }
+}

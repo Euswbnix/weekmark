@@ -27,6 +27,7 @@
   "tabs": {
     "label": "课程内容",
     "week": "本周",
+    "explain": "讲解",
     "timeline": "教学进度",
     "deadlines": "截止日期",
     "policy": "AI 使用规定",

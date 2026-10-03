@@ -7,6 +7,7 @@ import { CALENDAR_UI } from "@/features/course/proposals/availability";
 import { ReadSyllabiBatch } from "@/features/course/proposals/ReadSyllabiBatch";
 import { REMOVAL_UI } from "@/features/course/removal/availability";
 import { LifecycleBanner } from "@/features/course/removal/LifecycleBanner";
+import { WeeklyNoteCard } from "@/features/weekly-note/WeeklyNoteCard";
 import { CourseList } from "./CourseList";
 import { CoursesEmpty } from "./CoursesEmpty";
 import { CoursesPageSkeleton } from "./Skeletons";
@@ -43,6 +44,7 @@ export function CoursesPage() {
       <div className="space-y-10">
         {REMOVAL_UI ? <LifecycleBanner /> : null}
         <ThisWeek />
+        <WeeklyNoteCard />
         <StudyPlanCard />
         {CALENDAR_UI ? <ReadSyllabiBatch /> : null}
         <CourseList courses={courses.data} />

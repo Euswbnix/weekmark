@@ -11,14 +11,22 @@ describe("mock What's new", () => {
   });
 
   it("gives an upgrader the topics after their version, and one from 0.1 everything", () => {
-    expect(topicsSince("0.3.0-alpha.1")).toEqual(["course_removal", "syllabus_reading"]);
-    expect(topicsSince("0.3.0-alpha.2")).toEqual(["syllabus_reading"]);
-    expect(topicsSince("0.3.0-alpha.3")).toEqual([]);
+    expect(topicsSince("0.3.0-alpha.1")).toEqual([
+      "course_removal",
+      "syllabus_reading",
+      "ai_writing",
+      "reminders",
+    ]);
+    expect(topicsSince("0.3.0-alpha.2")).toEqual(["syllabus_reading", "ai_writing", "reminders"]);
+    expect(topicsSince("0.3.0-alpha.3")).toEqual(["ai_writing", "reminders"]);
+    expect(topicsSince("0.3.0-beta.1")).toEqual([]);
     expect(topicsSince(null)).toEqual([
       "update_check",
       "course_weeks",
       "course_removal",
       "syllabus_reading",
+      "ai_writing",
+      "reminders",
     ]);
   });
 

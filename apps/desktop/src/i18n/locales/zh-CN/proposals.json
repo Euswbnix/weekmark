@@ -195,6 +195,9 @@
     "accepted_one": "已确认 {{count}} 门课的日期。",
     "accepted_other": "已确认 {{count}} 门课的日期。",
     "done": "完成",
-    "failed": "没能读取课程大纲"
+    "failed": "没能读取课程大纲",
+    "notNow": "暂不处理",
+    "notNowLabel": "暂不处理：用 AI 读取教学大纲",
+    "snoozed": "两周后再提醒你。"
   }
 }

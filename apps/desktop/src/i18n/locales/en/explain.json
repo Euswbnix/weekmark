@@ -1,0 +1,79 @@
+{
+  "title": "Explain a week",
+  "hint": "{{product}} asks your model to explain the week's materials in order, each paragraph citing the material it comes from. Check it against your slides: AI can be wrong.",
+  "week": "Week",
+  "weekOption": "Week {{week}}",
+  "thisWeek": "Week {{week}} (this week)",
+  "generate": "Explain week {{week}}",
+  "blocked": {
+    "withheld_by_policy": "This course's AI policy doesn't allow AI to read its materials, so its weeks can't be explained.",
+    "turned_off": "AI access is off for this course. Turn it on in the AI policy tab to explain its weeks.",
+    "course_hidden": "This course is hidden. Show it again to explain its weeks.",
+    "no_readable_materials": "This week has no materials with readable text to explain."
+  },
+  "openPolicy": "Open the AI policy tab",
+  "running": {
+    "starting": "Starting…",
+    "withModel": "Writing with {{backend}} · {{model}}",
+    "reading_one": "Reading {{count}} material",
+    "reading_other": "Reading {{count}} materials",
+    "stage": {
+      "building_context": "Gathering the week's materials",
+      "waiting_for_model": "Waiting for the model",
+      "validating": "Checking the citations",
+      "repairing": "Fixing the answer's format",
+      "scheduling": "Arranging the answer"
+    },
+    "stop": "Stop",
+    "stopping": "Stopping…",
+    "writingNow": "Writing the explanation",
+    "leaveHint": "Switching tabs keeps it going; leaving this course stops it, and nothing is saved."
+  },
+  "result": {
+    "regionLabel": "Explanation of week {{week}}",
+    "done": "The explanation is ready.",
+    "stopped": "Stopped. Nothing was saved.",
+    "failed": "The explanation couldn't be written.",
+    "stale": "The materials changed since this was written.",
+    "regenerate": "Write again",
+    "questions": "Check your understanding",
+    "leftOut": "Not read this time",
+    "leftOutReason": {
+      "external_link": "a link to another site",
+      "no_text": "no readable text",
+      "looks_like_assessment": "looks like graded work",
+      "over_budget": "over the length limit"
+    },
+    "includeOne": "Not graded work? Include it and write again",
+    "includeSeveral": "Not graded work? Include these {{count}} and write again",
+    "droppedCitations_one": "{{count}} citation the model gave didn't match your materials and was removed.",
+    "droppedCitations_other": "{{count}} citations the model gave didn't match your materials and were removed.",
+    "citeAiUse": "Your course asks you to cite AI use: say where you used this explanation.",
+    "copy": "Copy",
+    "sourcesLabel": "Sources",
+    "citation": "{{title}}, {{locator}}",
+    "notOnComputer": "{{title}} isn't on this computer and has no link to open.",
+    "delete": "Delete…",
+    "deleteTitle": "Delete this explanation?",
+    "deleteBody": "It is removed from {{product}}, with its text. This can't be undone.",
+    "deleteConfirm": "Delete",
+    "deleted": "Explanation deleted.",
+    "deleteFailed": "The explanation couldn't be deleted.",
+    "regionLabelRecent": "Explanation of the recent materials",
+    "includeNote": "{{product}} explains concepts; it doesn't answer assignments, quizzes or exams."
+  },
+  "history": {
+    "title": "Earlier explanations",
+    "showing": "Showing",
+    "show": "Show"
+  },
+  "language": {
+    "title": "Language of AI explanations",
+    "description": "Explanations can be written in {{product}}'s language or in the language of the course materials.",
+    "ui": "{{product}}'s language",
+    "course": "The course materials' language"
+  },
+  "generateRecent": "Explain the recent materials",
+  "recent": "Recent materials",
+  "weeksUnknown": "This course's weeks aren't known, so {{product}} explains its materials of the last 14 days."
+}

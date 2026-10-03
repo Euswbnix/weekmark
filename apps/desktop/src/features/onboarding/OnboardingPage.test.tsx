@@ -113,6 +113,12 @@ describe("OnboardingPage", () => {
       "href",
       "/courses",
     );
+    // Once the courses are in, the one AI question (no model is set up in the mock).
+    expect(
+      await screen.findByRole("region", {
+        name: `Let ${brand.productName} write plans and explanations`,
+      }),
+    ).toBeInTheDocument();
 
     await expectSecretNotKept(FEED_SECRET, queryClient);
   });

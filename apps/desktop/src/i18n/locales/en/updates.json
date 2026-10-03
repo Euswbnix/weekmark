@@ -76,6 +76,14 @@
       "syllabus_reading": {
         "title": "Course dates from the syllabus",
         "body": "With a model you set up, {{product}} can read a course's syllabus and propose its dates, each quoting the words it comes from. Nothing changes until you accept them."
+      },
+      "ai_writing": {
+        "title": "Study plans and weekly explanations",
+        "body": "With a model you set up, {{product}} can plan your study days around your deadlines, and explain a week's materials with the pages each point comes from. Start from “Plan with {{product}}…” on Courses, or a course's Explain tab."
+      },
+      "reminders": {
+        "title": "Reminders",
+        "body": "Notifications before deadlines and a weekly summary. They're off until you turn them on in Settings → Reminders; {{product}} then stays in the tray and starts when you log in."
       }
     }
   },

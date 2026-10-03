@@ -1,0 +1,10 @@
+{
+  "plan": {
+    "writeMyPlan": "生成我的计划",
+    "writeAgain": "重新生成",
+    "useThisPlan": "使用这份计划",
+    "closeHint": "关闭后会停止生成，不会保存任何内容。",
+    "readOnly": "这里仅供查看。想调整计划，可以用 {{product}} 重新规划。",
+    "reason": "（{{reason}}）"
+  }
+}

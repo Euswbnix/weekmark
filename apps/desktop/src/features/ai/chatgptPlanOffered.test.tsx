@@ -52,8 +52,14 @@ describe("the ChatGPT plan while this build doesn't offer it (the default)", () 
     const status = await api.aiStatus();
     expect(status.chatgpt_plan_offered).toBe(false);
     expect(status.backends.some((b) => b.backend.kind === "codex")).toBe(false);
-    // codex_status still answers (for clean-up), and says the same.
-    expect((await api.codexStatus()).chatgpt_plan_offered).toBe(false);
+    // codex_status still answers (for clean-up), says the same, and, like the facade, looked
+    // for no Codex: neutral, with none of the student's own.
+    expect(await api.codexStatus()).toMatchObject({
+      chatgpt_plan_offered: false,
+      runtime: { state: "not_installed", installed_version: null },
+      login: { state: "signed_out" },
+      system_codex: null,
+    });
     const refusal = { kind: "blocked", blocked: "backend_disabled_in_this_build" };
     await expect(api.installCodex("i-1", () => {})).rejects.toMatchObject(refusal);
     await expect(api.codexLogin("browser", () => {})).rejects.toMatchObject(refusal);

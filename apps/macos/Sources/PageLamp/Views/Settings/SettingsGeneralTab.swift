@@ -1,15 +1,27 @@
 // Settings ▸ General (spec §3.5 W8a, M1): Language and Appearance. Content switches language
-// live; menus and system dialogs follow AppleLanguages, hence Reopen Now. (Week starts on is M2;
-// the menu bar and login items are M3.)
+// live; menus and system dialogs follow AppleLanguages, hence Reopen Now. In preview builds until
+// they ship: Show PageLamp in the menu bar and Open PageLamp at login (M3), independent of each
+// other and of reminders. (Week starts on is M2.)
 
 import AppKit
 import SwiftUI
 import PageLampModel
 
 struct SettingsGeneralTab: View {
+    /// The tab's height in the Settings window (preview builds have the menu bar section).
+    #if PAGELAMP_PREVIEW
+    static let height: CGFloat = 420
+    #else
+    static let height: CGFloat = 220
+    #endif
+
     @Environment(AppModel.self) private var model
     @Environment(\.l10n) private var l10n
     @State private var reopening = false
+    @AppStorage(PageLampScenes.showInMenuBarKey) private var showInMenuBar = false
+    #if PAGELAMP_PREVIEW
+    @State private var loginItem = LoginItem()
+    #endif
 
     var body: some View {
         @Bindable var model = model
@@ -46,9 +58,57 @@ struct SettingsGeneralTab: View {
                 }
                 .pickerStyle(.segmented)
             }
+            #if PAGELAMP_PREVIEW
+            Section {
+                Toggle(isOn: $showInMenuBar) {
+                    Text(l10n("mac.reminders.general.menuBar"))
+                    Text(l10n("mac.reminders.general.menuBarHint"))
+                }
+                loginRows
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                // The student may have allowed or removed it in System Settings meanwhile.
+                loginItem.refresh()
+            }
+            #endif
         }
     }
 }
+
+#if PAGELAMP_PREVIEW
+extension SettingsGeneralTab {
+    /// "Open PageLamp at login" and what macOS says about it.
+    @ViewBuilder fileprivate var loginRows: some View {
+        Toggle(l10n("mac.reminders.general.login"), isOn: Binding(
+            get: { loginItem.state == .on || loginItem.state == .needsApproval },
+            set: { loginItem.set($0) }
+        ))
+        .disabled(loginItem.state == .unavailable)
+        switch loginItem.state {
+        case .needsApproval:
+            HStack(alignment: .firstTextBaseline, spacing: PLSpace.s4) {
+                Text(l10n("mac.reminders.general.loginApproval"))
+                    .font(PLType.callout.font)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(l10n("mac.reminders.general.openLoginItems")) { loginItem.openSystemSettings() }
+            }
+        case .unavailable:
+            Text(l10n("mac.reminders.general.loginUnavailable"))
+                .font(PLType.callout.font)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .on, .off:
+            EmptyView()
+        }
+        if loginItem.failed {
+            Text(l10n("mac.reminders.general.loginFailed"))
+                .font(PLType.callout.font)
+                .foregroundStyle(PLColor.danger)
+        }
+    }
+}
+#endif
 
 /// The system's preferred languages, ignoring this app's own AppleLanguages override (set by
 /// Reopen Now), so "System (…)" names what the system really prefers. Read-only.

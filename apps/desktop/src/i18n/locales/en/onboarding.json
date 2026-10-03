@@ -41,5 +41,12 @@
     "goToCourses": "Go to my courses",
     "continueInBackground": "Continue in the background",
     "backgroundHint": "The sync keeps running; its progress shows in the sidebar."
+  },
+  "aiOffer": {
+    "title": "Let {{product}} write plans and explanations",
+    "body": "With a model you choose, {{product}} can plan your study week and explain a week's materials, citing the pages it read. Nothing is sent to an AI service until you set one up and read what it receives.",
+    "setUp": "Set up a model",
+    "notNow": "Not now",
+    "later": "You can set one up any time in Settings → AI models."
   }
 }

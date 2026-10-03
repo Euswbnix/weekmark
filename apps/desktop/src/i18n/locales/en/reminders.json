@@ -1,0 +1,55 @@
+{
+  "settings": {
+    "title": "Reminders",
+    "description": "Deadlines and your week, as notifications on this computer. They show course codes and titles, never the text of your materials.",
+    "deadlineSoon": "Deadlines coming up",
+    "deadlineSoonHint": "Two days and one day before something is due.",
+    "weeklyDigest": "Your week",
+    "weeklyDigestHint": "The deadlines of the next 7 days, once a week.",
+    "day": "Day",
+    "time": "Time",
+    "fieldOf": "{{field}} for {{item}}",
+    "planToday": "Today's study plan",
+    "planTodayHint": "What your saved study plan has for today.",
+    "invalidTime": "Use a time like 09:00.",
+    "background": "Keep {{product}} in the tray and start it at login",
+    "backgroundHint": "{{product}} reminds you only with this on, and only while it runs. Off, closing the window quits {{product}}.",
+    "trayUnavailable": "The tray isn't available on this system; install libayatana-appindicator3-1 to get it. {{product}} still starts at login and reminds you; open it again to see its window.",
+    "loginItemOff": "Starting at login is turned off in your system's settings, so reminders begin once you open {{product}}.",
+    "notSeeing": "Not seeing reminders? Allow {{product}} in your system's notification settings.",
+    "openNotificationSettings": "Open notification settings",
+    "saveFailed": "Your reminder settings couldn't be saved."
+  },
+  "remind": {
+    "title": "Remind me",
+    "question": "Keep {{product}} in the tray and start it at login, so it can remind you about deadlines and your week?",
+    "yes": "Yes, remind me",
+    "no": "Not now",
+    "onDone": "{{product}} will remind you. You can change this in Settings → Reminders.",
+    "offDone": "No reminders. You can turn them on in Settings → Reminders."
+  },
+  "notify": {
+    "deadlineTitle": "{{code}}: {{title}}",
+    "deadlineBody": "Due {{when}}",
+    "when": "{{weekday}} {{time}}",
+    "digestTitle": "Your week in {{product}}",
+    "digestBody_one": "{{count}} deadline in the next 7 days",
+    "digestBody_other": "{{count}} deadlines in the next 7 days",
+    "digestBodyNone": "No deadlines in the next 7 days",
+    "planTitle": "Today's study plan",
+    "planBody_one": "{{count}} thing to do today",
+    "planBody_other": "{{count}} things to do today",
+    "onTitle": "Reminders are on",
+    "onBody": "{{product}} will remind you here about deadlines and your week."
+  },
+  "tray": {
+    "open": "Open {{product}}",
+    "quit": "Quit {{product}}"
+  },
+  "catchUp": {
+    "title": "Since you last opened {{product}}",
+    "open": "Open",
+    "dismiss": "Dismiss",
+    "turnOn": "Get these as notifications"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "reminders": {
+    "remind": {
+      "question": "要接收截止日期和本周安排的通知吗？{{product}} 会提前一周安排好，即使它没有打开也能收到。",
+      "yes": "好，提醒我",
+      "no": "暂不",
+      "onDone": "{{product}} 会提醒你。可以在「设置 ▸ 提醒」里更改。",
+      "offDone": "不提醒。可以在「设置 ▸ 提醒」里开启。",
+      "saveFailed": "你的选择没能保存。"
+    },
+    "settings": {
+      "notify": "用通知提醒我",
+      "notifyHint": "{{product}} 会提前一周安排提醒，即使它没有打开也能收到。每周至少打开一次，提醒才不会中断。",
+      "notDetermined": "开启后，macOS 会询问是否允许 {{product}} 发送通知。",
+      "denied": "系统设置里关闭了 {{product}} 的通知，所以提醒只会显示在 {{product}} 里面。",
+      "openNotificationSettings": "打开通知设置",
+      "digestDay": "本周概览的星期",
+      "digestTime": "本周概览的时间",
+      "planTime": "今天学习计划的时间"
+    },
+    "catchUp": {
+      "turnOn": "改为用通知提醒"
+    },
+    "general": {
+      "menuBar": "在菜单栏中显示 {{product}}",
+      "menuBarHint": "一眼看到本周安排。关闭最后一个窗口后，{{product}} 仍会在菜单栏中运行。",
+      "login": "登录时打开 {{product}}",
+      "loginApproval": "需要在「系统设置 ▸ 通用 ▸ 登录项」中批准。",
+      "loginUnavailable": "这份 {{product}} 无法加入登录项。请把它移到“应用程序”文件夹，再从那里打开。",
+      "loginFailed": "没能把 {{product}} 加入或移出登录项。",
+      "openLoginItems": "打开登录项设置"
+    }
+  },
+  "menuBar": {
+    "label": "{{product}}",
+    "labelDue_one": "{{product}} — 24 小时内有 {{count}} 个截止日期",
+    "labelDue_other": "{{product}} — 24 小时内有 {{count}} 个截止日期",
+    "dueSoon": "即将截止",
+    "moreDue_one": "未来 7 天还有 {{count}} 个",
+    "moreDue_other": "未来 7 天还有 {{count}} 个",
+    "todayPlan": "今天的计划",
+    "moreToday_one": "今天还有 {{count}} 项",
+    "moreToday_other": "今天还有 {{count}} 项",
+    "lastWeek": "上周：{{planned}} 项中完成了 {{done}} 项",
+    "loadFailed": "本周内容没能载入。",
+    "settings": "设置…",
+    "open": "打开 {{product}}"
+  }
+}

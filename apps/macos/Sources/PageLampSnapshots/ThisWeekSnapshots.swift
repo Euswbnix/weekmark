@@ -111,7 +111,8 @@ enum ThisWeekSnapshots {
                     item(-1, "Review sampling vocabulary", nil, done: false),
                 ],
                 notes: "Catch up on the reading response before starting Week 4."
-            )
+            ),
+            origin: .aiApp
         )
     }
 }

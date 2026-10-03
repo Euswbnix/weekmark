@@ -15,7 +15,7 @@ use pagelamp_app::ai::{
 use pagelamp_core::ai::{AiFeature, Effort};
 use pagelamp_core::brand::CLI_NAME;
 
-use crate::{print_json, read_secret, text};
+use crate::{confirm, print_json, read_secret, text};
 
 #[derive(Subcommand)]
 pub enum AiCommand {
@@ -464,7 +464,11 @@ pub async fn run(app: &App, command: AiCommand, json: bool) -> anyhow::Result<()
                     let [course] = <[String; 1]>::try_from(courses).map_err(|_| {
                         anyhow::anyhow!("weekly-explanation needs exactly one --course")
                     })?;
-                    EstimateRequest::WeeklyExplanation { course, week }
+                    EstimateRequest::WeeklyExplanation {
+                        course,
+                        week,
+                        include: Vec::new(),
+                    }
                 }
                 FeatureArg::WeeklyNote => EstimateRequest::WeeklyNote,
                 FeatureArg::CourseCalendar => EstimateRequest::CourseCalendar { courses },
@@ -517,7 +521,8 @@ pub enum SourceArg {
 }
 
 async fn codex(app: &App, command: CodexCommand, json: bool) -> anyhow::Result<()> {
-    // Status and sign-out (clean-up) work in every build; the rest needs the ChatGPT plan.
+    // Status (which then starts nothing) and sign-out (clean-up) work in every build; the rest
+    // needs the ChatGPT plan.
     if !matches!(command, CodexCommand::Status | CodexCommand::Logout) {
         app.require_chatgpt_plan()?;
     }
@@ -604,8 +609,11 @@ async fn codex(app: &App, command: CodexCommand, json: bool) -> anyhow::Result<(
 }
 
 fn print_codex_status(status: &CodexStatus) {
+    // Nothing else to show: no Codex was looked for, and every hint below names a command that
+    // refuses in this build.
     if !status.chatgpt_plan_offered {
         println!("The ChatGPT plan isn't available in this version of PageLamp.");
+        return;
     }
     let runtime = &status.runtime;
     let installed = match (runtime.state, &runtime.installed_version) {
@@ -748,6 +756,8 @@ async fn use_model(
     let status = app.ai_status()?;
     let Some(backend) = status.backends.iter().find(|b| b.backend == choice.backend) else {
         if choice.backend == BackendRef::Codex {
+            // In a build that doesn't offer the plan, its own refusal (no setup copy).
+            app.require_chatgpt_plan()?;
             anyhow::bail!(
                 "set up the ChatGPT plan first: `{CLI_NAME} ai codex install`, then `{CLI_NAME} ai codex login`"
             );
@@ -796,26 +806,6 @@ async fn use_model(
         choice.effort.as_str()
     );
     Ok(())
-}
-
-/// Ask on the terminal; with `--yes` (or answered "y") go on. Piped without `--yes`: stop.
-fn confirm(question: &str, yes: bool) -> anyhow::Result<()> {
-    use std::io::{BufRead, IsTerminal, Write};
-    if yes {
-        return Ok(());
-    }
-    if !std::io::stdin().is_terminal() {
-        anyhow::bail!("nothing changed: read the above, then run again with --yes to accept");
-    }
-    eprint!("{question} [y/N] ");
-    std::io::stderr().flush()?;
-    let mut answer = String::new();
-    std::io::stdin().lock().read_line(&mut answer)?;
-    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-        Ok(())
-    } else {
-        anyhow::bail!("nothing changed")
-    }
 }
 
 fn estimate_line(estimate: &CostEstimate) -> String {

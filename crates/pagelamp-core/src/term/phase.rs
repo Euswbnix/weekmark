@@ -267,6 +267,22 @@ pub fn teaching_week_on(term: &TermResolution, date: NaiveDate) -> Option<u32> {
     teaching_week_in(term, segment, date)
 }
 
+/// The Monday week `week` starts on, by the resolution's segments and breaks (the inverse of
+/// `teaching_week_on`); None when no Monday of the term falls in that week. Saved explanations
+/// keep it (`generations.week_starts_on`): a calendar that moves the week makes them stale.
+pub fn week_starts_on(term: &TermResolution, week: u32) -> Option<NaiveDate> {
+    let first = term
+        .teaching
+        .iter()
+        .map(|segment| week_one_monday(segment.first_class))
+        .min()?;
+    // A year and a half of Mondays covers every term (a full-year course has at most 36
+    // weeks of teaching plus its breaks).
+    (0..80)
+        .map(|n| first + chrono::Duration::weeks(n))
+        .find(|monday| teaching_week_on(term, *monday) == Some(week))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,5 +422,15 @@ mod tests {
         let t = TermResolution::default();
         assert_eq!(phase(&t, date(2026, 9, 28)).phase, CoursePhase::Unknown);
         assert_eq!(teaching_week_on(&t, date(2026, 9, 28)), None);
+    }
+
+    #[test]
+    fn a_week_starts_on_its_monday_and_moves_with_the_calendar() {
+        let term = term(date(2026, 9, 9), Some(date(2026, 12, 4)));
+        assert_eq!(week_starts_on(&term, 1), Some(date(2026, 9, 7)));
+        assert_eq!(week_starts_on(&term, 3), Some(date(2026, 9, 21)));
+        assert_eq!(week_starts_on(&term, 40), None);
+        let later = super::tests::term(date(2026, 9, 16), Some(date(2026, 12, 4)));
+        assert_eq!(week_starts_on(&later, 3), Some(date(2026, 9, 28)));
     }
 }

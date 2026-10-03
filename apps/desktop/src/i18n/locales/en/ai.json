@@ -262,7 +262,7 @@
     "course_policy_prohibited": "This course's rules say no AI, so {{product}} won't send anything from it.",
     "course_ai_turned_off": "You turned AI off for this course's materials.",
     "course_hidden": "This course is hidden.",
-    "no_readable_materials": "This week has no materials {{product}} can read.",
+    "no_readable_materials": "No materials {{product}} can read.",
     "material_sharing_not_allowed": "You said this course's materials may not be shared with AI services, so nothing was sent.",
     "coding_plan_key": "This key is from a coding plan, which {{product}} can't use.",
     "disclosure_not_acknowledged": "Read what this service receives, then turn it on.",
@@ -270,7 +270,9 @@
     "budget_reached": "This would go over this month's budget.",
     "price_unknown_not_acknowledged": "{{product}} has no price for this model. Confirm to use it without a budget.",
     "weekly_run_cap_reached": "You've reached this week's run limit.",
-    "backend_disabled_in_this_build": "This service isn't available in this version of {{product}}."
+    "backend_disabled_in_this_build": "This service isn't available in this version of {{product}}.",
+    "nothing_to_write": "There's nothing to write about this week yet: no active course, no deadline in the next 7 days and no study plan item.",
+    "no_course_to_plan": "There's no active course to plan for."
   },
   "modelError": {
     "not_signed_in": "You're not signed in to this service.",

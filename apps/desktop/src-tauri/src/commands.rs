@@ -13,9 +13,10 @@ use chrono::NaiveDate;
 use pagelamp_app::LocalFileUse;
 use pagelamp_app::ai::{
     AiStatus, BackendRef, CodexLoginMethod, CodexSource, CodexStatus, CostEstimate,
-    EstimateRequest, GenEvent, LocalServer, LoginEvent, ModelChoice, ModelInfo,
-    ModelProviderRecord, ProbeReport, ProviderPreset, RemoveAiDataReport, RuntimeEvent,
-    UsageSummary,
+    EstimateRequest, ExplainOptions, GenEvent, GeneratedStudyPlan, LocalServer, LoginEvent,
+    ModelChoice, ModelInfo, ModelProviderRecord, OutputLanguage, PlanLimits, ProbeReport,
+    ProviderPreset, RemoveAiDataReport, RuntimeEvent, StudyPlanRequest, UsageSummary,
+    WeeklyExplanation, WeeklyNote, WeeklyNoteOptions, WeeklyNoteSettings,
 };
 use pagelamp_app::diagnostics::{self, CrashReport, DoctorReport};
 use pagelamp_app::{
@@ -239,6 +240,12 @@ pub async fn latest_study_plan(backend: State<'_, Backend>) -> CmdResult<Option<
     backend.blocking(|app| app.latest_study_plan()).await
 }
 
+/// What a study plan request may ask for (constants: no store).
+#[tauri::command]
+pub fn plan_limits() -> PlanLimits {
+    pagelamp_app::ai::plan_limits()
+}
+
 // ----- course settings ----------------------------------------------------------------------------
 
 #[tauri::command]
@@ -355,6 +362,12 @@ pub async fn lifecycle_summary(backend: State<'_, Backend>) -> CmdResult<Lifecyc
 #[tauri::command]
 pub async fn snooze_lifecycle_banner(backend: State<'_, Backend>) -> CmdResult<()> {
     backend.blocking(|app| app.snooze_lifecycle_banner()).await
+}
+
+/// "Not now" on the syllabus reading offers (14 days).
+#[tauri::command]
+pub async fn snooze_calendar_offers(backend: State<'_, Backend>) -> CmdResult<()> {
+    backend.blocking(|app| app.snooze_calendar_offers()).await
 }
 
 #[tauri::command]
@@ -573,6 +586,157 @@ pub async fn read_course_calendars(
             })
             .await
         })
+        .await
+}
+
+// ----- weekly explanations (v0.3 M3; design §5.2) --------------------------------------------------
+
+/// A week explained: a model run (the install gate holds it back; `cancel_generation` stops it).
+#[tauri::command]
+pub async fn explain_week(
+    backend: State<'_, Backend>,
+    course: String,
+    week: Option<u32>,
+    generation_id: String,
+    options: ExplainOptions,
+    on_event: Channel<GenEvent>,
+) -> CmdResult<WeeklyExplanation> {
+    backend
+        .spawn_work(|app| async move {
+            app.explain_week(&course, week, &generation_id, options, move |event| {
+                let _ = on_event.send(event);
+            })
+            .await
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn saved_explanations(
+    backend: State<'_, Backend>,
+    course: String,
+    week: Option<u32>,
+) -> CmdResult<Vec<WeeklyExplanation>> {
+    backend
+        .blocking(move |app| app.saved_explanations(&course, week))
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_explanation(
+    backend: State<'_, Backend>,
+    generation_id: String,
+) -> CmdResult<()> {
+    backend
+        .blocking(move |app| app.delete_explanation(&generation_id))
+        .await
+}
+
+#[tauri::command]
+pub async fn ai_output_language(backend: State<'_, Backend>) -> CmdResult<OutputLanguage> {
+    backend.blocking(|app| app.ai_output_language()).await
+}
+
+#[tauri::command]
+pub async fn set_ai_output_language(
+    backend: State<'_, Backend>,
+    language: OutputLanguage,
+) -> CmdResult<()> {
+    backend
+        .blocking(move |app| app.set_ai_output_language(language))
+        .await
+}
+
+// ----- study plans written by PageLamp (v0.3 M3; design §5.1) ------------------------------------
+
+/// A draft plan: a model run (the install gate holds it back; `cancel_generation` stops it).
+#[tauri::command]
+pub async fn generate_study_plan(
+    backend: State<'_, Backend>,
+    request: StudyPlanRequest,
+    generation_id: String,
+    on_event: Channel<GenEvent>,
+) -> CmdResult<GeneratedStudyPlan> {
+    backend
+        .spawn_work(|app| async move {
+            app.generate_study_plan(request, &generation_id, move |event| {
+                let _ = on_event.send(event);
+            })
+            .await
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn accept_study_plan(
+    backend: State<'_, Backend>,
+    generation_id: String,
+) -> CmdResult<StoredStudyPlan> {
+    backend
+        .blocking(move |app| app.accept_study_plan(&generation_id))
+        .await
+}
+
+#[tauri::command]
+pub async fn set_study_plan_item_done(
+    backend: State<'_, Backend>,
+    plan_id: i64,
+    item_index: u32,
+    done: bool,
+) -> CmdResult<StoredStudyPlan> {
+    backend
+        .blocking(move |app| app.set_study_plan_item_done(plan_id, item_index, done))
+        .await
+}
+
+// ----- the weekly note (v0.3 beta.2; design §5.3) ------------------------------------------------
+
+/// A weekly note: a model run (the install gate holds it back; `cancel_generation` stops it).
+/// Monday's note is the same call with `automatic`, started by the UI from `startup_tasks`.
+#[tauri::command]
+pub async fn write_weekly_note(
+    backend: State<'_, Backend>,
+    generation_id: String,
+    options: WeeklyNoteOptions,
+    on_event: Channel<GenEvent>,
+) -> CmdResult<WeeklyNote> {
+    backend
+        .spawn_work(|app| async move {
+            app.write_weekly_note(&generation_id, options, move |event| {
+                let _ = on_event.send(event);
+            })
+            .await
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn weekly_notes(backend: State<'_, Backend>) -> CmdResult<Vec<WeeklyNote>> {
+    backend.blocking(|app| app.weekly_notes()).await
+}
+
+#[tauri::command]
+pub async fn delete_weekly_note(
+    backend: State<'_, Backend>,
+    generation_id: String,
+) -> CmdResult<()> {
+    backend
+        .blocking(move |app| app.delete_weekly_note(&generation_id))
+        .await
+}
+
+#[tauri::command]
+pub async fn weekly_note_settings(backend: State<'_, Backend>) -> CmdResult<WeeklyNoteSettings> {
+    backend.blocking(|app| app.weekly_note_settings()).await
+}
+
+#[tauri::command]
+pub async fn set_prepare_weekly_note_on_monday(
+    backend: State<'_, Backend>,
+    on: bool,
+) -> CmdResult<WeeklyNoteSettings> {
+    backend
+        .blocking(move |app| app.set_prepare_weekly_note_on_monday(on))
         .await
 }
 

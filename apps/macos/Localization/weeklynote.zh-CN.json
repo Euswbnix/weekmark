@@ -1,0 +1,7 @@
+{
+  "weeklyNote": {
+    "write": "写我的每周笔记",
+    "writeAgain": "重新写一份",
+    "showFrom": "查看 {{when}} 的笔记"
+  }
+}

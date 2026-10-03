@@ -153,6 +153,14 @@ fn an_explanation_gets_only_readable_text_without_assessments_or_links() {
     let reasons: Vec<LeftOutReason> = summary.left_out.iter().map(|l| l.reason).collect();
     assert!(reasons.contains(&LeftOutReason::LooksLikeAssessment));
     assert!(reasons.contains(&LeftOutReason::ExternalLink));
+    // Only the assessment may be sent anyway.
+    for left in &summary.left_out {
+        assert_eq!(
+            left.includable,
+            left.reason == LeftOutReason::LooksLikeAssessment,
+            "{left:?}"
+        );
+    }
     // Citations resolve to the included chunk only.
     let target = context.resolve_citation("c1").unwrap();
     assert_eq!(target.title, "Week 3 slides");

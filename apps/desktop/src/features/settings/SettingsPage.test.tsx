@@ -4,6 +4,7 @@ import { ApiError } from "@/api/errors";
 import { createMockApi } from "@/api/mock";
 import { MOCK_APP_VERSION } from "@/api/mock/fixtures";
 import { brand, localized } from "@/brand";
+import { REMINDERS_UI } from "@/features/reminders/availability";
 import i18n from "@/i18n";
 import { useUiStore } from "@/stores/ui";
 import { renderRoute } from "@/test/render";
@@ -83,13 +84,16 @@ describe("SettingsPage", () => {
     expect(i18n.language).toBe("zh-CN");
   });
 
-  it("shows no unfinished features (reminders come in v0.2)", async () => {
+  it("shows no placeholders for unfinished features", async () => {
     renderRoute("/settings");
     await section("Appearance");
-    expect(screen.queryByRole("region", { name: "Reminders" })).toBeNull();
-    // The only switch is Appearance ▸ Reduce transparency (Lamplight, §8).
-    expect(screen.queryAllByRole("switch")).toHaveLength(1);
-    expect(screen.getByRole("switch", { name: "Reduce transparency" })).toBeInTheDocument();
+    // Appearance ▸ Reduce transparency (Lamplight, §8), Updates ▸ automatic checks (M0.4), and
+    // Reminders (M3) where it is built: off by default, so only its "Remind me" switch.
+    const switches = ["Reduce transparency", "Check for updates automatically"];
+    if (REMINDERS_UI) switches.push("Keep PageLamp in the tray and start it at login");
+    else expect(screen.queryByRole("region", { name: "Reminders" })).toBeNull();
+    for (const name of switches) expect(await screen.findByRole("switch", { name })).toBeVisible();
+    expect(screen.queryAllByRole("switch")).toHaveLength(switches.length);
     expect(screen.queryByText("Coming soon")).toBeNull();
   });
 

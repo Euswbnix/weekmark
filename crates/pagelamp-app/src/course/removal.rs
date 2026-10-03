@@ -119,6 +119,16 @@ pub struct RemovedCourse {
     pub files_pending: bool,
 }
 
+/// What a purge would do (`purge_targets`), for a shell to show before it asks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PurgeTargets {
+    /// Removals whose local data goes now, and purged courses whose downloaded files go to the
+    /// Trash.
+    pub courses: Vec<RemovedCourse>,
+    /// One of the removals asked for the pre-update backup to go with it (`--delete-backup`).
+    pub deletes_backup: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RemovalReport {
     pub removed: Vec<RemovedCourse>,
@@ -392,14 +402,43 @@ impl App {
     ) -> Result<PurgeReport> {
         let _lock = self.acquire_sync_lock()?;
         let store = self.write_store()?;
-        let targets = match removed_ids {
-            Some(ids) => ids
-                .iter()
-                .map(|id| store.tombstone(id)?.ok_or_else(|| no_removed_course(id)))
-                .collect::<Result<Vec<_>>>()?,
-            None => due_or_waiting(&store)?,
-        };
+        let targets = purge_targets_in(&store, removed_ids.as_deref())?;
         self.purge_locked(&store, targets, permanent_if_no_trash)
+    }
+
+    /// What `purge_removed_courses` with the same `removed_ids` would do, read-only, so a shell
+    /// can show it and ask first (the CLI's `course purge`): the removals whose data it deletes,
+    /// and the purged courses whose downloaded files it moves to the Trash. As in the purge, a
+    /// `restoring` course is left alone, and so is a purged one with no files left to move.
+    /// `NotFound` for an unknown id, as the purge.
+    pub fn purge_targets(&self, removed_ids: Option<&[String]>) -> Result<PurgeTargets> {
+        let store = self.read_store()?;
+        let files_dir = paths::files_dir_in(self.data_dir());
+        let mut targets = PurgeTargets {
+            courses: Vec::new(),
+            deletes_backup: false,
+        };
+        for tombstone in purge_targets_in(&store, removed_ids)? {
+            let acts = match tombstone.state {
+                TombstoneState::Pending => {
+                    targets.deletes_backup |= tombstone.delete_backup;
+                    true
+                }
+                TombstoneState::Purged => {
+                    tombstone.files_pending
+                        || (!tombstone.keep_files
+                            && self.source(&tombstone.source_id)?.kind == SourceKind::Canvas
+                            && !download_dirs(&store, &files_dir, &tombstone)?.is_empty())
+                }
+                TombstoneState::Restoring => false,
+            };
+            if acts {
+                targets
+                    .courses
+                    .push(self.removed_course(&store, tombstone)?);
+            }
+        }
+        Ok(targets)
     }
 
     /// Forget a purged course: the next sync brings it back. A removal that isn't purged yet
@@ -578,6 +617,18 @@ impl App {
             keep_files: tombstone.keep_files,
             files_pending: tombstone.files_pending,
         })
+    }
+}
+
+/// What a purge acts on: the removals in `removed_ids` (`NotFound` for an unknown one), or every
+/// due purge and purged course whose files still wait for the Trash (`None`).
+fn purge_targets_in(store: &Store, removed_ids: Option<&[String]>) -> Result<Vec<Tombstone>> {
+    match removed_ids {
+        Some(ids) => ids
+            .iter()
+            .map(|id| store.tombstone(id)?.ok_or_else(|| no_removed_course(id)))
+            .collect(),
+        None => due_or_waiting(store),
     }
 }
 

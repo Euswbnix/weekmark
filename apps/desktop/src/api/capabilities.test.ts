@@ -17,3 +17,14 @@ it("grants the webview no way to open or reveal local files", () => {
   expect(ids).not.toContain("opener:default");
   expect(ids.filter((id) => /^opener:allow-(open-path|reveal-item-in-dir)/.test(id))).toEqual([]);
 });
+
+// Reminders (v0.3 M3): the tray, the login item and notifications are Rust's (background.rs,
+// reminders.rs); the page only changes the setting through PageLamp commands. core:default would
+// bring the tray commands along, so the core sets are listed without it.
+it("grants the webview no tray, login item or notification permission", () => {
+  const ids = capabilities.permissions.map((p) => (typeof p === "string" ? p : p.identifier));
+  expect(ids).not.toContain("core:default");
+  expect(
+    ids.filter((id) => /^(core:tray|autostart|notification|single-instance)/.test(id)),
+  ).toEqual([]);
+});

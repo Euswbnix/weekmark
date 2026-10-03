@@ -29,7 +29,9 @@
   "plan": {
     "title": "Your study plan",
     "madeBy": "Made by your AI app {{when}} · covers {{start}} – {{end}}",
+    "madeByPageLamp": "Made by {{product}} {{when}} · covers {{start}} – {{end}}",
     "stale": "This plan may be out of date — ask your AI app for a new one.",
+    "stalePageLamp": "This plan may be out of date — plan again with {{product}}.",
     "notesLabel": "Notes from your AI app",
     "minutes": "{{count}} min",
     "done": "Done",
@@ -39,6 +41,8 @@
     "nothingSoon": "Nothing planned for today or the next 2 days.",
     "noItems": "This plan has no tasks yet.",
     "readOnly": "Read-only here. To change the plan, ask your AI app.",
+    "tickHint": "Tick tasks off as you finish them. To change the plan, ask your AI app or plan again with {{product}}.",
+    "tickFailed": "That task couldn't be ticked off. Try again.",
     "emptyTitle": "No study plan yet",
     "emptyDescription": "Ask your AI app: \"{{prompt}}\" It will appear here.",
     "prompt": "Make me a study plan for the next two weeks.",

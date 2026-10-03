@@ -200,6 +200,34 @@ const MIRRORED: &[&str] = &[
     "ActivityKind",
     "ActivityItem",
     "Activity",
+    // v0.3 M3: reminders and the weekly digest
+    "ReminderKind",
+    "DayOfWeek",
+    "ReminderSettings",
+    "Reminder",
+    "DigestCourse",
+    "DigestPlan",
+    "WeeklyDigest",
+    // v0.3 M3: study plans
+    "PlanOrigin",
+    "PlanLimits",
+    "StudyPlanRequest",
+    "UnscheduledReason",
+    "UnscheduledTask",
+    "PlanWarningCode",
+    "PlanWarning",
+    "GeneratedStudyPlan",
+    // v0.3 M3: weekly explanations
+    "OutputLanguage",
+    "ExplainOptions",
+    "Citation",
+    "ExplanationParagraph",
+    "ExplanationSection",
+    "WeeklyExplanation",
+    "WeeklyNote",
+    "NoteFocus",
+    "WeeklyNoteOptions",
+    "WeeklyNoteSettings",
     // AI (v0.3 M1)
     "AiFeature",
     "BlockReason",
@@ -670,6 +698,7 @@ fn course_lifecycle_calls_and_constants() {
             .ok
     );
 
+    assert_eq!(plan_limits(), pagelamp_app::ai::plan_limits());
     assert_eq!(not_now_days(), 14);
     assert_eq!(keep_current_days(), 120);
     assert_eq!(
@@ -711,6 +740,386 @@ fn course_lifecycle_calls_and_constants() {
         block_on(lamp.course_timeline("NOPE999".into())),
         Err(PageLampError::NotFound { .. })
     ));
+}
+
+// ----- model runs, observers and the rest of the lane (Part 2) -----------------------------------
+
+use pagelamp_app::ai::{
+    BackendRef, ExplainOptions, GenEvent, GenStage, ModelChoice, WeeklyNoteOptions,
+};
+use pagelamp_core::ai::{AiFeature, Effort};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// Synced demo courses with a model on this computer (an Ollama mock) chosen for weekly
+/// explanations and disclosed, all set up through the exported calls.
+struct LocalModel {
+    _temp: tempfile::TempDir,
+    lamp: Arc<PageLamp>,
+    server: MockServer,
+    /// Hosts the mock server.
+    runtime: tokio::runtime::Runtime,
+}
+
+fn with_local_model() -> LocalModel {
+    let temp = tempfile::tempdir().unwrap();
+    let courses = temp.path().join("Courses");
+    course_folder(&courses);
+    let lamp = block_on(PageLamp::open_with_memory_secrets(path_string(
+        &temp.path().join("data"),
+    )))
+    .unwrap();
+    block_on(lamp.add_folder_source(path_string(&courses), None, None)).unwrap();
+    assert!(
+        block_on(lamp.sync_all(SyncRequest::default(), Arc::new(Collect::default())))
+            .unwrap()
+            .ok
+    );
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = runtime.block_on(MockServer::start());
+    // Adding the provider lists its models.
+    runtime.block_on(
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"models": [{"name": "local-model"}]})),
+            )
+            .mount(&server),
+    );
+    let provider =
+        block_on(lamp.add_model_provider("ollama".into(), Some(server.uri()), None)).unwrap();
+    let backend = BackendRef::Provider {
+        provider_id: provider.provider_id,
+    };
+    block_on(lamp.set_feature_model(
+        AiFeature::WeeklyExplanation,
+        Some(ModelChoice {
+            backend: backend.clone(),
+            model: "local-model".into(),
+            effort: Effort::Lowest,
+        }),
+    ))
+    .unwrap();
+    let version = block_on(lamp.ai_status())
+        .unwrap()
+        .backends
+        .iter()
+        .find(|b| b.backend == backend)
+        .unwrap()
+        .disclosure
+        .version;
+    block_on(lamp.acknowledge_ai_disclosure(backend, version)).unwrap();
+    LocalModel {
+        _temp: temp,
+        lamp,
+        server,
+        runtime,
+    }
+}
+
+/// An Ollama answer carrying `content`, after `delay`.
+fn ollama_answer(content: &str, delay: Duration) -> ResponseTemplate {
+    let lines = [
+        serde_json::json!({"model": "local-model", "created_at": "2026-09-29T10:00:00Z",
+            "message": {"role": "assistant", "content": content}, "done": false}),
+        serde_json::json!({"model": "local-model", "created_at": "2026-09-29T10:00:01Z",
+            "message": {"role": "assistant", "content": ""}, "done": true,
+            "done_reason": "stop", "prompt_eval_count": 50, "eval_count": 20}),
+    ];
+    let body: String = lines.iter().map(|line| format!("{line}\n")).collect();
+    ResponseTemplate::new(200)
+        .insert_header("content-type", "application/x-ndjson")
+        .set_body_string(body)
+        .set_delay(delay)
+}
+
+fn explanation() -> String {
+    serde_json::json!({
+        "sections": [{"heading": "The Calvin cycle", "paragraphs": [
+            {"text": "The Calvin cycle fixes carbon dioxide.", "citations": ["c1"]}
+        ]}],
+        "check_questions": ["What does the Calvin cycle fix?"]
+    })
+    .to_string()
+}
+
+/// Records every event and signals when the model is being waited for.
+struct Recorder {
+    events: Mutex<Vec<GenEvent>>,
+    waiting: Mutex<Option<mpsc::Sender<()>>>,
+}
+
+impl GenObserver for Recorder {
+    fn on_event(&self, event: GenEvent) {
+        if matches!(
+            event,
+            GenEvent::Stage {
+                stage: GenStage::WaitingForModel
+            }
+        ) && let Some(waiting) = self.waiting.lock().unwrap().take()
+        {
+            let _ = waiting.send(());
+        }
+        self.events.lock().unwrap().push(event);
+    }
+}
+
+#[test]
+fn a_generation_stops_when_swift_cancels_its_id() {
+    let model = with_local_model();
+    model.runtime.block_on(
+        Mock::given(method("POST"))
+            .respond_with(ollama_answer(&explanation(), Duration::from_secs(120)))
+            .mount(&model.server),
+    );
+    let (waiting_tx, waiting_rx) = mpsc::channel();
+    let recorder = Arc::new(Recorder {
+        events: Mutex::new(Vec::new()),
+        waiting: Mutex::new(Some(waiting_tx)),
+    });
+    let run = {
+        let lamp = model.lamp.clone();
+        let recorder = recorder.clone();
+        std::thread::spawn(move || {
+            block_on(lamp.explain_week(
+                "DEMO101".into(),
+                Some(2),
+                "explain-cancel".into(),
+                ExplainOptions::default(),
+                recorder,
+            ))
+        })
+    };
+    waiting_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the run reached the model");
+    let asked = std::time::Instant::now();
+    block_on(model.lamp.cancel_generation("explain-cancel".into())).unwrap();
+    let result = run.join().unwrap();
+    assert!(
+        matches!(result, Err(PageLampError::Cancelled { .. })),
+        "{result:?}"
+    );
+    assert!(
+        asked.elapsed() < Duration::from_secs(20),
+        "stopped promptly"
+    );
+    assert!(
+        matches!(
+            recorder.events.lock().unwrap().first(),
+            Some(GenEvent::Started { generation_id, .. }) if generation_id == "explain-cancel"
+        ) || recorder
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, GenEvent::Stage { .. }))
+    );
+    // Unknown and finished ids are fine.
+    block_on(model.lamp.cancel_generation("explain-cancel".into())).unwrap();
+    block_on(model.lamp.cancel_generation("never-ran".into())).unwrap();
+}
+
+/// Never returns from its first event until the test ends.
+struct Stuck(Mutex<mpsc::Receiver<()>>);
+
+impl GenObserver for Stuck {
+    fn on_event(&self, _event: GenEvent) {
+        let _ = self.0.lock().unwrap().recv();
+    }
+}
+
+struct Panics;
+
+impl GenObserver for Panics {
+    fn on_event(&self, _event: GenEvent) {
+        panic!("an observer that fails");
+    }
+}
+
+#[test]
+fn the_weekly_note_calls_reach_the_facade() {
+    let model = with_local_model();
+    let lamp = &model.lamp;
+    let settings = block_on(lamp.weekly_note_settings()).unwrap();
+    assert!(!settings.prepare_on_monday && !settings.prepare_on_monday_allowed);
+    assert!(matches!(
+        block_on(lamp.set_prepare_weekly_note_on_monday(true)),
+        Err(PageLampError::Invalid { .. })
+    ));
+    // The explanations' local model writes notes too.
+    let backend = block_on(lamp.ai_status()).unwrap().backends[0]
+        .backend
+        .clone();
+    block_on(lamp.set_feature_model(
+        AiFeature::WeeklyNote,
+        Some(ModelChoice {
+            backend,
+            model: "local-model".into(),
+            effort: Effort::Lowest,
+        }),
+    ))
+    .unwrap();
+    assert!(
+        block_on(lamp.set_prepare_weekly_note_on_monday(true))
+            .unwrap()
+            .prepare_on_monday_allowed
+    );
+    let note = serde_json::json!({
+        "note": "Week 2 of DEMO101 continues.",
+        "focus": [{"text": "Review the week 2 notes", "course_id": null}]
+    })
+    .to_string();
+    model.runtime.block_on(
+        Mock::given(method("POST"))
+            .respond_with(ollama_answer(&note, Duration::ZERO))
+            .mount(&model.server),
+    );
+    let recorder = Arc::new(Recorder {
+        events: Mutex::new(Vec::new()),
+        waiting: Mutex::new(None),
+    });
+    let written = block_on(lamp.write_weekly_note(
+        "note-ffi".into(),
+        WeeklyNoteOptions::default(),
+        recorder.clone(),
+    ))
+    .unwrap();
+    assert_eq!(written.text, "Week 2 of DEMO101 continues.");
+    assert_eq!(written.focus.len(), 1);
+    assert!(
+        recorder
+            .events
+            .lock()
+            .unwrap()
+            .contains(&GenEvent::Finished { ok: true })
+    );
+    assert_eq!(block_on(lamp.weekly_notes()).unwrap().len(), 1);
+    block_on(lamp.delete_weekly_note("note-ffi".into())).unwrap();
+    assert!(matches!(
+        block_on(lamp.delete_weekly_note("note-ffi".into())),
+        Err(PageLampError::NotFound { .. })
+    ));
+}
+
+#[test]
+fn an_observer_that_hangs_or_panics_cannot_hold_up_or_break_the_run() {
+    let model = with_local_model();
+    model.runtime.block_on(
+        Mock::given(method("POST"))
+            .respond_with(ollama_answer(&explanation(), Duration::ZERO))
+            .mount(&model.server),
+    );
+    let (release, stuck) = mpsc::channel();
+    let started = std::time::Instant::now();
+    let explained = block_on(model.lamp.explain_week(
+        "DEMO101".into(),
+        Some(2),
+        "explain-stuck".into(),
+        ExplainOptions::default(),
+        Arc::new(Stuck(Mutex::new(stuck))),
+    ))
+    .unwrap();
+    assert_eq!(explained.week, Some(2));
+    // The run finished; the call waited at most DRAIN_WAIT for the observer.
+    assert!(
+        started.elapsed() < observers::DRAIN_WAIT + Duration::from_secs(15),
+        "{:?}",
+        started.elapsed()
+    );
+
+    let explained = block_on(model.lamp.explain_week(
+        "DEMO101".into(),
+        Some(2),
+        "explain-panics".into(),
+        ExplainOptions::default(),
+        Arc::new(Panics),
+    ))
+    .unwrap();
+    assert_eq!(explained.week, Some(2));
+    assert_eq!(
+        block_on(model.lamp.saved_explanations("DEMO101".into(), Some(2)))
+            .unwrap()
+            .len(),
+        2
+    );
+    drop(release);
+}
+
+#[test]
+fn the_lane_calls_reach_the_facade() {
+    let temp = tempfile::tempdir().unwrap();
+    let courses = temp.path().join("Courses");
+    course_folder(&courses);
+    let lamp = block_on(PageLamp::open_with_memory_secrets(path_string(
+        &temp.path().join("data"),
+    )))
+    .unwrap();
+    block_on(lamp.add_folder_source(path_string(&courses), None, None)).unwrap();
+    assert!(
+        block_on(lamp.sync_all(SyncRequest::default(), Arc::new(Collect::default())))
+            .unwrap()
+            .ok
+    );
+
+    // Reminders and the digest.
+    let mut settings = block_on(lamp.reminder_settings()).unwrap();
+    settings.weekly_digest = !settings.weekly_digest;
+    block_on(lamp.set_reminder_settings(settings.clone())).unwrap();
+    assert_eq!(block_on(lamp.reminder_settings()).unwrap(), settings);
+    let digest = block_on(lamp.weekly_digest()).unwrap();
+    assert_eq!(digest.courses.len(), 2);
+    let now = Utc::now();
+    block_on(lamp.reminders(now, now + TimeDelta::days(7))).unwrap();
+    let due = block_on(lamp.due_reminders(now)).unwrap();
+    block_on(lamp.mark_reminders_shown(due.iter().map(|r| r.id.clone()).collect())).unwrap();
+
+    // Calendars (nothing to read in these folders) and the offers' snooze.
+    let view = block_on(lamp.course_calendar("DEMO101".into())).unwrap();
+    assert!(view.accepted.is_none());
+    block_on(lamp.calendar_candidates("DEMO101".into())).unwrap();
+    block_on(lamp.syllabus_reading_offers()).unwrap();
+    block_on(lamp.snooze_calendar_offers()).unwrap();
+    assert!(matches!(
+        block_on(lamp.dismiss_calendar_proposal(4242)),
+        Err(PageLampError::NotFound { .. })
+    ));
+
+    // AI settings that need no model.
+    assert!(!block_on(lamp.model_provider_presets()).unwrap().is_empty());
+    block_on(lamp.set_monthly_budget(Some(2_000_000))).unwrap();
+    block_on(lamp.usage_summary(None)).unwrap();
+    assert_eq!(block_on(lamp.delete_generated(None)).unwrap(), 0);
+    block_on(lamp.set_ai_output_language(block_on(lamp.ai_output_language()).unwrap())).unwrap();
+
+    // Removing a course, then undoing it.
+    let preview = block_on(lamp.removal_preview(vec!["DEMO202".into()])).unwrap();
+    assert_eq!(preview.items.len(), 1);
+    block_on(lamp.remove_courses(
+        vec!["DEMO202".into()],
+        pagelamp_app::RemoveOptions {
+            reason: None,
+            keep_downloaded_files: false,
+            purge_now: false,
+            delete_pre_update_backup: false,
+        },
+    ))
+    .unwrap();
+    let removed = block_on(lamp.removed_courses()).unwrap();
+    assert_eq!(removed.len(), 1);
+    block_on(lamp.restore_course(removed[0].removed_id.clone())).unwrap();
+    assert_eq!(block_on(lamp.list_courses()).unwrap().len(), 2);
+
+    // The course folder's own file, and a no-op cancel.
+    let week1 = block_on(lamp.week_materials("DEMO101".into(), Some(1))).unwrap();
+    let file = block_on(lamp.material_local_file(
+        week1.materials[0].id.clone(),
+        pagelamp_app::LocalFileUse::Open,
+    ))
+    .unwrap();
+    assert!(file.is_some_and(|path| path.ends_with("lecture-01.md")));
+    block_on(lamp.cancel_sync()).unwrap();
 }
 
 #[test]

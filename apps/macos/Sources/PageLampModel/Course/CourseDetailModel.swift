@@ -54,6 +54,10 @@ public final class CourseDetailModel {
     /// `list_deadlines(course, 14, 7)`, split into coming up and recently past.
     public private(set) var deadlines: CourseLoadable<CourseDeadlines> = .loading
     public private(set) var inspectorRequest: InspectorRequest?
+    /// The Explain section (M3) while the student is on the course: kept across section switches
+    /// (a run goes on), dropped when they leave.
+    public private(set) var explain: ExplainModel?
+    @ObservationIgnored private var explainService = -1
 
     @ObservationIgnored private var weekGeneration = 0
     @ObservationIgnored private var overviewGeneration = 0
@@ -130,6 +134,24 @@ public final class CourseDetailModel {
         }
         guard generation == deadlinesGeneration else { return }
         deadlines = result
+    }
+
+    /// The Explain section's model, made on first use (and again for a new service: Debug ▸
+    /// Data Source, the live facade opening).
+    public func explainModel(using model: AppModel) -> ExplainModel {
+        if let explain, explainService == model.serviceGeneration { return explain }
+        explain?.leave()
+        let fresh = ExplainModel(courseId: courseId, service: model.service)
+        explain = fresh
+        explainService = model.serviceGeneration
+        return fresh
+    }
+
+    /// The student left the course: a run in flight stops, and the section starts afresh next
+    /// time (like the Tauri app's tab).
+    public func leaveExplain() {
+        explain?.leave()
+        explain = nil
     }
 
     /// "AI Policy…", "Set Term Dates…", the AI status line: opens the inspector at `section`.

@@ -62,7 +62,8 @@ public struct SegmentedLayout: Equatable, Sendable {
 
     public var count: Int { labelWidths.count }
 
-    /// The control's size: 273 × 24 for the English course labels, 243 × 24 for the Chinese.
+    /// The control's size: 273 × 24 for the English course labels, 243 × 24 for the Chinese (364 /
+    /// 324 with Explain).
     public var size: CGSize {
         CGSize(width: CGFloat(count) * slotWidth, height: SegmentedMetrics.height)
     }

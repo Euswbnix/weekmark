@@ -127,10 +127,18 @@ const GROUP_OF: Record<LifecycleState, CourseGroup> = {
   inactive: "past",
 };
 
+/** The facade's `is_active` on `today`: Current, Finishing or Unknown, or Upcoming and
+ * starting within 14 days. */
+export function activeOn(state: LifecycleState, startsOn: string | null, today: string): boolean {
+  if (state === "upcoming") return startsOn !== null && startsOn <= addDays(today, 14);
+  return state === "current" || state === "finishing" || state === "unknown";
+}
+
 export function lifecycle(
   partial: Partial<CourseLifecycle> & Pick<CourseLifecycle, "state">,
 ): CourseLifecycle {
   const past = GROUP_OF[partial.state] === "past";
+  const startsOn = partial.starts_on ?? null;
   return {
     group: GROUP_OF[partial.state],
     confidence: "medium",
@@ -141,6 +149,7 @@ export function lifecycle(
     evidence_items: [],
     suggest_removal: past,
     kept_current_until: null,
+    is_active: activeOn(partial.state, startsOn, isoOf(new Date())),
     ...partial,
   };
 }
@@ -154,6 +163,7 @@ export function keptCurrent(base: CourseLifecycle, until: string): CourseLifecyc
     confidence: "high",
     suggest_removal: false,
     kept_current_until: until,
+    is_active: true,
     evidence_items: [ev("kept_current", { until })],
   };
 }

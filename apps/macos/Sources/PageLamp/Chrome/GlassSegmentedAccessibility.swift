@@ -3,7 +3,7 @@
 // value the selected segment, no actions; each segment is an `AXRadioButton` / `AXTabButton`
 // ("tab") whose description is its title and whose value is 1 or 0, with a settable focus (the
 // key segment while the control is first responder) and one action, press. VoiceOver counts the
-// children for "1 of 3". Notifications as the system control posts them (GlassSegmentedControl):
+// children for "1 of 3" ("1 of 4" with Explain). Notifications as the system control posts them (GlassSegmentedControl):
 // focused-element changes only, never a value change, no custom announcements.
 
 import AppKit

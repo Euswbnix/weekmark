@@ -1,0 +1,76 @@
+{
+  "title": "Plan your study",
+  "description": "{{product}} asks your model for tasks from your courses, then places them on your study days. Nothing is saved until you choose to use the plan.",
+  "entry": "Plan with {{product}}…",
+  "form": {
+    "horizon": "Days to plan",
+    "horizonHint": "Starting today, 1 to 56 days.",
+    "hours": "Study hours per week",
+    "hoursHint": "1 to 80 hours; at most 4 hours on one day.",
+    "daysOff": "Days off",
+    "daysOffHint": "No study is planned on these days.",
+    "courses": "Courses",
+    "coursesHint": "The model reads only the material text your AI settings allow; the other courses are planned from their structure.",
+    "noCourses": "Choose at least one course.",
+    "nothingToPlan": "No course is active right now (none is running or starts in the next 14 days), so there's nothing to plan.",
+    "seeCourses": "See your courses",
+    "note": "Anything to focus on? (optional)",
+    "noteHint": "For example \"the midterm on Friday\". It is sent to the model with your courses.",
+    "generate": "Write my plan",
+    "invalidHorizon": "Plan 1 to 56 days.",
+    "invalidHours": "Use 1 to 80 hours.",
+    "noStudyDays": "Leave at least one study day."
+  },
+  "running": {
+    "starting": "Starting…",
+    "withModel": "Writing with {{backend}} · {{model}}",
+    "stage": {
+      "building_context": "Gathering your courses",
+      "waiting_for_model": "Waiting for the model",
+      "validating": "Checking the answer",
+      "repairing": "Fixing the answer's format",
+      "scheduling": "Placing tasks on your study days"
+    },
+    "stop": "Stop",
+    "stopping": "Stopping…",
+    "writingNow": "Writing your plan",
+    "leaveHint": "Leaving this page stops it; nothing is saved."
+  },
+  "draft": {
+    "title": "Your draft plan",
+    "summary_one": "{{count}} task, {{start}} to {{end}}",
+    "summary_other": "{{count}} tasks, {{start}} to {{end}}",
+    "day": "Day",
+    "course": "Course",
+    "task": "Task",
+    "time": "Time",
+    "minutes_one": "{{count}} min",
+    "minutes_other": "{{count}} min",
+    "noItems": "The model proposed no tasks for these days.",
+    "accept": "Use this plan",
+    "regenerate": "Write again",
+    "discard": "Discard",
+    "ready": "Your draft plan is ready.",
+    "accepted": "Saved as your study plan.",
+    "stopped": "Stopped. Nothing was saved.",
+    "discarded": "Draft discarded.",
+    "failed": "The plan couldn't be written.",
+    "acceptFailed": "The plan couldn't be saved."
+  },
+  "unscheduled": {
+    "title": "Not in the plan",
+    "reason": {
+      "outside_horizon": "after the plan's last day",
+      "no_study_days": "no study day left",
+      "no_time_before_latest": "no time left before it's due",
+      "too_many_items": "too many tasks"
+    }
+  },
+  "warnings": {
+    "graded_work_left_out_one": "{{count}} task was left out because it looked like an answer to graded work.",
+    "graded_work_left_out_other": "{{count}} tasks were left out because they looked like answers to graded work.",
+    "unknown_materials_dropped_one": "{{count}} material the model named isn't in your courses, so it was left out.",
+    "unknown_materials_dropped_other": "{{count}} materials the model named aren't in your courses, so they were left out."
+  },
+  "structureOnly": "Planned from structure only (no material text was shared): {{courses}}."
+}

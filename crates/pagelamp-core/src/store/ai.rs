@@ -143,6 +143,16 @@ impl Store {
         )
     }
 
+    /// Runs in the usage ledger by outcome (`ok`, `failed`, `cancelled`): counts only, for the
+    /// diagnostic report.
+    pub fn ai_usage_outcomes(&self) -> Result<Vec<(String, u32)>> {
+        self.query_list(
+            "SELECT outcome, COUNT(*) FROM ai_usage GROUP BY outcome ORDER BY outcome",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    }
+
     /// Delete usage rows older than `before` (the 13-month retention); returns how many.
     pub fn prune_ai_usage(&self, before: Timestamp) -> Result<u32> {
         let removed = self

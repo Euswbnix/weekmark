@@ -71,6 +71,7 @@ it("sends the commands and arguments the Rust side expects", async () => {
   await api.lifecycleSummary();
   await api.snoozeLifecycleBanner();
   await api.snoozeRemovalSuggestions([COURSE], "not_now");
+  await api.snoozeCalendarOffers();
   await api.clearRemovalSnooze([COURSE]);
   // Removal: the course and removed ids are made up, so the facade answers not_found (nothing is
   // removed or moved to the Trash); purging every due removal finds none in the empty data dir.
@@ -108,6 +109,42 @@ it("sends the commands and arguments the Rust side expects", async () => {
     () => {},
   );
   await api.cancelGeneration("contract-test-generation");
+  await api.explainWeek(
+    COURSE,
+    4,
+    "contract-test-explanation",
+    { include: ["contract-test-material"], ui_language: "en", override_budget: false },
+    onEvent,
+  );
+  await api.savedExplanations(COURSE, 4);
+  await api.deleteExplanation("contract-test-explanation");
+  await api.aiOutputLanguage();
+  await api.setAiOutputLanguage("course");
+  await api.generateStudyPlan(
+    {
+      horizon_days: 14,
+      hours_per_week: 10,
+      days_off: ["saturday"],
+      courses: [COURSE],
+      note: "contract test",
+      override_budget: false,
+    },
+    "contract-test-plan",
+    onEvent,
+  );
+  await api.planLimits();
+  await api.acceptStudyPlan("contract-test-plan");
+  await api.setStudyPlanItemDone(1, 0, true);
+  // The replay's data dir has no model chosen: refused before anything is sent.
+  await api.writeWeeklyNote(
+    "contract-test-note",
+    { automatic: false, override_budget: false, ui_language: "en" },
+    onEvent,
+  );
+  await api.weeklyNotes();
+  await api.deleteWeeklyNote("contract-test-note");
+  await api.weeklyNoteSettings();
+  await api.setPrepareWeeklyNoteOnMonday(true);
   await api.openMaterial("contract-test-material");
   await api.revealMaterial("contract-test-material");
   await api.clearKeepCourseCurrent(COURSE);
@@ -128,6 +165,23 @@ it("sends the commands and arguments the Rust side expects", async () => {
   await api.acknowledgeWhatsNew();
   await api.acknowledgeUpdateDisclosure();
   await api.lastUpdateCheck();
+  await api.reminderSettings();
+  await api.setReminderSettings({
+    deadline_soon: true,
+    weekly_digest: true,
+    digest_day: "monday",
+    digest_time: "09:00",
+    plan_today: false,
+    plan_today_time: "08:00",
+    run_in_background: false,
+  });
+  await api.backgroundStatus();
+  await api.setTrayLabels({ open: "Open PageLamp", quit: "Quit PageLamp" });
+  await api.dueReminders();
+  await api.showReminders([{ id: "contract-test-reminder", title: "DEMO101: Quiz", body: "Due" }]);
+  await api.markRemindersShown(["contract-test-reminder"]);
+  await api.openNotificationSettings();
+  await api.showRemindersOnNotice("Reminders are on", "contract test");
   await api.aiStatus();
   await api.modelProviderPresets();
   await api.addModelProvider("custom", OFFLINE_LLM_URL, "contract-test-key");

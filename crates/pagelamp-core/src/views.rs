@@ -606,6 +606,13 @@ pub fn deadlines(
         let events = store.list_events(from, to, Some(&course.id))?;
         return Ok(events.iter().map(|e| deadline(e, Some(&course))).collect());
     }
+    deadlines_between(store, from, to)
+}
+
+/// Events with `when()` in [`from`, `to`], soonest first, of every visible course that isn't
+/// removed, whatever its lifecycle (deadline reminders, calendar design §8.1), plus events not
+/// linked to any course except a feed's events naming a removed course's code (§8.3).
+pub fn deadlines_between(store: &Store, from: Timestamp, to: Timestamp) -> Result<Vec<Deadline>> {
     let courses: HashMap<String, Course> = store
         .list_courses(true)?
         .into_iter()

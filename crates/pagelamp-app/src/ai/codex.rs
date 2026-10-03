@@ -9,7 +9,9 @@
 //! `BackendDisabledInThisBuild` (install, sign-in, the Codex choices, the disclosure, models,
 //! "Test", and runs, a Codex routing stored by an earlier build included), and `codex_status` and
 //! `ai_status` say so in `chatgpt_plan_offered`, so the UIs hide the ChatGPT card and copy.
-//! Clean-up still works: `remove_codex`, `codex_logout`, `forget_codex` and "Remove all AI data".
+//! `codex_status` then looks for no Codex and starts none. Clean-up still works: `remove_codex`,
+//! `codex_logout` (only when a Codex sign-in folder is there), `forget_codex` and "Remove all AI
+//! data".
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -72,21 +74,31 @@ struct Binary {
     source: CodexSource,
 }
 
+/// The local data folder of an app using `data_dir` (see `App::local_dir`).
+pub(crate) fn local_dir_for(data_dir: &std::path::Path) -> PathBuf {
+    match paths::platform_local_data_dir() {
+        Some(local) if crate::same_dir(Some(data_dir), paths::platform_data_dir().as_deref()) => {
+            local
+        }
+        _ => data_dir.to_path_buf(),
+    }
+}
+
+/// The Codex versions PageLamp installed for an app using `data_dir`, newest first (versions
+/// only, for the diagnostic report).
+pub(crate) fn installed_versions(data_dir: &std::path::Path) -> Vec<String> {
+    Runtime::new(paths::codex_runtime_dir_in(&local_dir_for(data_dir)))
+        .installed()
+        .into_iter()
+        .map(|installed| installed.version.to_string())
+        .collect()
+}
+
 impl App {
     /// Where large, non-roaming data goes (`paths::local_data_dir`): the platform's local folder
     /// when this app uses the default data folder, else the data folder itself.
     pub(crate) fn local_dir(&self) -> PathBuf {
-        match paths::platform_local_data_dir() {
-            Some(local)
-                if crate::same_dir(
-                    Some(self.data_dir()),
-                    paths::platform_data_dir().as_deref(),
-                ) =>
-            {
-                local
-            }
-            _ => self.data_dir().to_path_buf(),
-        }
+        local_dir_for(self.data_dir())
     }
 
     pub(crate) fn codex_home(&self) -> CodexHome {
@@ -139,7 +151,10 @@ impl App {
     // ----- status -------------------------------------------------------------------------------
 
     /// The ChatGPT-plan card: runtime (managed or the student's own), sign-in, the weekly cap.
-    /// Starts `codex login status` and `codex --version` (both local, a few milliseconds).
+    /// Starts `codex login status` and `codex --version` (both local, a few milliseconds). In a
+    /// build that doesn't offer the plan, nothing is looked for or started (no PATH lookup, no
+    /// `codex`, no Codex sign-in folder created): the status says so, the rest neutral (not
+    /// installed, signed out, no Codex of the student's own).
     pub async fn codex_status(&self) -> Result<CodexStatus> {
         let pin = codex::pin();
         let target = codex::running_target();
@@ -151,11 +166,17 @@ impl App {
         let outdated: Option<OutdatedSeen> = store.setting(settings::CODEX_OUTDATED)?;
         drop(store);
 
-        let system = self.detect_system_codex().await;
-        let binary = self.codex_binary().await.ok();
-        let login = match &binary {
-            Some(binary) => self.login_state(binary).await,
-            None => None,
+        let offered = self.chatgpt_plan_offered();
+        let (system, binary, login) = if offered {
+            let system = self.detect_system_codex().await;
+            let binary = self.codex_binary().await.ok();
+            let login = match &binary {
+                Some(binary) => self.login_state(binary).await,
+                None => None,
+            };
+            (system, binary, login)
+        } else {
+            (None, None, None)
         };
         let state = if asset.is_none() {
             CodexRuntimeState::UnsupportedPlatform
@@ -164,13 +185,17 @@ impl App {
         } else {
             CodexRuntimeState::NotInstalled
         };
-        let outdated_action = outdated_action(
-            outdated.as_ref().map(|seen| seen.version.as_str()),
-            binary.as_ref().map(|b| (&b.version, b.source)),
-            &pin.version(),
-        );
+        let outdated_action = if offered {
+            outdated_action(
+                outdated.as_ref().map(|seen| seen.version.as_str()),
+                binary.as_ref().map(|b| (&b.version, b.source)),
+                &pin.version(),
+            )
+        } else {
+            CodexOutdatedAction::None
+        };
         Ok(CodexStatus {
-            chatgpt_plan_offered: self.chatgpt_plan_offered(),
+            chatgpt_plan_offered: offered,
             runtime: CodexRuntime {
                 state,
                 source,
@@ -391,17 +416,43 @@ impl App {
         }
     }
 
-    /// `codex logout` (Codex revokes and deletes its own credentials).
+    /// `codex logout` (Codex revokes and deletes its own credentials). In a build that doesn't
+    /// offer the plan it is clean-up: with no Codex sign-in folder there is nothing to sign out
+    /// of and nothing is started; with one, the Codex "Remove all AI data" would use signs out
+    /// (never asked for its version).
     pub async fn codex_logout(&self) -> Result<CodexStatus> {
-        let binary = self.codex_binary().await?;
-        {
+        let binary = if self.chatgpt_plan_offered() {
+            Some(self.codex_binary().await?.path)
+        } else if self.codex_home().dir().exists() {
+            Some(self.cleanup_binary().ok_or_else(|| AppError {
+                model_error: Some(ModelErrorKind::RuntimeMissing),
+                ..AppError::new(
+                    AppErrorKind::Model,
+                    "There's no Codex to sign out with; \"Remove all AI data\" deletes its sign-in.",
+                )
+            })?)
+        } else {
+            None
+        };
+        if let Some(binary) = binary {
             let _one_at_a_time = self.codex_state().runs.lock().await;
-            login::logout(&binary.path, &self.codex_home())
+            login::logout(&binary, &self.codex_home())
                 .await
                 .map_err(codex_error)?;
         }
         *self.last_login() = Some(CodexLoginState::SignedOut);
         self.codex_status().await
+    }
+
+    /// The Codex clean-up signs out with: the newest managed runtime, else a `codex` on PATH
+    /// (never asked for its version).
+    fn cleanup_binary(&self) -> Option<PathBuf> {
+        self.codex_runtime()
+            .installed()
+            .into_iter()
+            .next()
+            .map(|installed| installed.binary)
+            .or_else(|| find_on_path(if cfg!(windows) { "codex.exe" } else { "codex" }))
     }
 
     /// "Remove all AI data": `codex logout` (Codex revokes and deletes its own credentials), then
@@ -410,14 +461,7 @@ impl App {
     pub(crate) fn forget_codex(&self) -> Result<()> {
         let home = self.codex_home();
         if home.dir().exists() {
-            let binary = self
-                .codex_runtime()
-                .installed()
-                .into_iter()
-                .next()
-                .map(|installed| installed.binary)
-                .or_else(|| find_on_path(if cfg!(windows) { "codex.exe" } else { "codex" }));
-            if let Some(binary) = binary {
+            if let Some(binary) = self.cleanup_binary() {
                 // Signed out, or Codex can't run: the folder goes either way; Busy stops here.
                 if let Err(CodexError::Busy) = login::logout_blocking(&binary, &home) {
                     return Err(codex_error(CodexError::Busy));
@@ -610,7 +654,7 @@ impl App {
         let plan = super::run::Billing::Plan;
         match result {
             Ok(outcome) => {
-                let usage = self.record_run_usage(
+                let cost = self.record_run_usage(
                     USAGE_BACKEND,
                     &outcome.model,
                     request.feature,
@@ -618,7 +662,7 @@ impl App {
                     plan,
                     "ok",
                 )?;
-                on_event(super::GenEvent::Usage { usage });
+                on_event(super::GenEvent::Usage { usage: cost.usage });
                 let json = match schema {
                     Some(_) => Some(serde_json::from_str(&outcome.text).map_err(|_| {
                         model_error(
@@ -633,6 +677,7 @@ impl App {
                     backend_label: CODEX_LABEL.to_string(),
                     model: outcome.model,
                     on_device: false,
+                    cost,
                 })
             }
             Err(err) => {

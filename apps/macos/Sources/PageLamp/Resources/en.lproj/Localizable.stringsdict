@@ -147,6 +147,38 @@
 			<string>%1$ld deadlines in the next 7 days</string>
 		</dict>
 	</dict>
+	<key>explain.result.droppedCitations</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld citation the model gave didn't match your materials and was removed.</string>
+			<key>other</key>
+			<string>%1$ld citations the model gave didn't match your materials and were removed.</string>
+		</dict>
+	</dict>
+	<key>explain.running.reading</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>Reading %1$ld material</string>
+			<key>other</key>
+			<string>Reading %1$ld materials</string>
+		</dict>
+	</dict>
 	<key>mac.a11y.minutes</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -243,6 +275,54 @@
 			<string>%1$ld weeks ago</string>
 		</dict>
 	</dict>
+	<key>mac.menuBar.labelDue</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>PageLamp — %1$ld deadline in the next 24 hours</string>
+			<key>other</key>
+			<string>PageLamp — %1$ld deadlines in the next 24 hours</string>
+		</dict>
+	</dict>
+	<key>mac.menuBar.moreDue</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld more in the next 7 days</string>
+			<key>other</key>
+			<string>%1$ld more in the next 7 days</string>
+		</dict>
+	</dict>
+	<key>mac.menuBar.moreToday</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld more today</string>
+			<key>other</key>
+			<string>%1$ld more today</string>
+		</dict>
+	</dict>
 	<key>mac.relative.daysAgo</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -337,6 +417,70 @@
 			<string>%1$ld plan task today</string>
 			<key>other</key>
 			<string>%1$ld plan tasks today</string>
+		</dict>
+	</dict>
+	<key>plan.draft.minutes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld min</string>
+			<key>other</key>
+			<string>%1$ld min</string>
+		</dict>
+	</dict>
+	<key>plan.draft.summary</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld task, %2$@ to %3$@</string>
+			<key>other</key>
+			<string>%1$ld tasks, %2$@ to %3$@</string>
+		</dict>
+	</dict>
+	<key>plan.warnings.graded_work_left_out</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld task was left out because it looked like an answer to graded work.</string>
+			<key>other</key>
+			<string>%1$ld tasks were left out because they looked like answers to graded work.</string>
+		</dict>
+	</dict>
+	<key>plan.warnings.unknown_materials_dropped</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld material the model named isn't in your courses, so it was left out.</string>
+			<key>other</key>
+			<string>%1$ld materials the model named aren't in your courses, so they were left out.</string>
 		</dict>
 	</dict>
 	<key>proposals.batch.acceptPassing</key>
@@ -465,6 +609,38 @@
 			<string>%1$ld date was left out because it couldn't be checked against the materials:</string>
 			<key>other</key>
 			<string>%1$ld dates were left out because they couldn't be checked against the materials:</string>
+		</dict>
+	</dict>
+	<key>reminders.notify.digestBody</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld deadline in the next 7 days</string>
+			<key>other</key>
+			<string>%1$ld deadlines in the next 7 days</string>
+		</dict>
+	</dict>
+	<key>reminders.notify.planBody</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld thing to do today</string>
+			<key>other</key>
+			<string>%1$ld things to do today</string>
 		</dict>
 	</dict>
 	<key>removal.banner.title</key>
@@ -673,6 +849,22 @@
 			<string>%1$ld warning</string>
 			<key>other</key>
 			<string>%1$ld warnings</string>
+		</dict>
+	</dict>
+	<key>weeklyNote.gradedLeftOut</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%1$ld focus item was left out because it looked like an answer to graded work.</string>
+			<key>other</key>
+			<string>%1$ld focus items were left out because they looked like answers to graded work.</string>
 		</dict>
 	</dict>
 </dict>

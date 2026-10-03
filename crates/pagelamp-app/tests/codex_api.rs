@@ -200,6 +200,7 @@ async fn the_estimate_counts_tokens_and_the_weekly_cap_stops_runs() {
     let request = EstimateRequest::WeeklyExplanation {
         course: "DEMO101".into(),
         week: Some(3),
+        include: Vec::new(),
     };
     let first = app.estimate_generation(&request).unwrap();
     assert_eq!(

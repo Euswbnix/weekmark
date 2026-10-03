@@ -61,6 +61,8 @@ describe("What's new (upgraders)", () => {
     expect(within(sheet).getByText("Since version 0.3.0-alpha.0")).toBeInTheDocument();
     expect(within(sheet).getByText("PageLamp now updates itself")).toBeInTheDocument();
     expect(within(sheet).getByText("Weeks and phases for every course")).toBeInTheDocument();
+    // From before alpha.1: every topic.
+    expect(within(sheet).getAllByRole("heading", { level: 3 })).toHaveLength(6);
     expect(
       within(sheet).getByRole("switch", { name: "Check for updates automatically" }),
     ).toBeChecked();
@@ -102,6 +104,27 @@ describe("What's new (upgraders)", () => {
     expect(
       await screen.findByRole("region", { name: `PageLamp was updated to ${MOCK_APP_VERSION}` }),
     ).toBeInTheDocument();
+  });
+
+  it("shows an upgrader from alpha.1 only what's new since, as headings, read from the top", async () => {
+    const { user } = renderRoute("/courses", { scenario: "upgrader-from-alpha1" });
+    const sheet = await screen.findByRole("dialog", { name: "What's new in PageLamp" });
+    expect(within(sheet).getByText("Since version 0.3.0-alpha.1")).toBeInTheDocument();
+    expect(
+      within(sheet)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual([
+      "Remove finished courses",
+      "Course dates from the syllabus",
+      "Study plans and weekly explanations",
+      "Reminders",
+    ]);
+    // The update check was explained in alpha.1: no switch again.
+    expect(within(sheet).queryByRole("switch")).toBeNull();
+    await waitFor(() => expect(within(sheet).getByRole("heading", { level: 2 })).toHaveFocus());
+    await user.click(within(sheet).getByRole("button", { name: "Got it" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("is read from the top: the title takes the focus, each topic is a heading", async () => {

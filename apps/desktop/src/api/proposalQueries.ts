@@ -35,6 +35,23 @@ export function useSyllabusReadingOffers(enabled = true) {
   });
 }
 
+/**
+ * "Not now" on the syllabus reading offers: 14 days for the courses offered now, like the
+ * lifecycle banner. The facade then offers none of them (the card and startup_tasks alike).
+ */
+export function useSnoozeCalendarOffers() {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.snoozeCalendarOffers(),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: proposalKeys.syllabusOffers() }),
+        client.invalidateQueries({ queryKey: queryKeys.startupTasks() }),
+      ]),
+  });
+}
+
 export function useSetCalendarSources() {
   const api = useApi();
   const invalidate = useInvalidateAll();

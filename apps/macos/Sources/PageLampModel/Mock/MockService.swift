@@ -33,9 +33,9 @@ public actor MockService: PageLampService {
 
     public nonisolated let scenario: MockScenario
     private let timing: Timing
-    private let now: @Sendable () -> Date
-    private let calendar: Calendar
-    private var db: MockDb
+    let now: @Sendable () -> Date
+    let calendar: Calendar
+    var db: MockDb
     private var syncing = false
     /// When the running sync started (`activity()`).
     private var syncStartedAt: Date?
@@ -53,6 +53,12 @@ public actor MockService: PageLampService {
         self.now = now
         self.calendar = calendar
         db = MockFixtures.database(scenario, now: now(), calendar: calendar)
+        db.features.ai = MockAi.start(scenario, now: now(), calendar: calendar)
+        // As in the Tauri mock: DEMO205's materials may not be shared with a cloud AI service.
+        if let demo205 = db.courses.first(where: { $0.course.code == "DEMO205" }) {
+            db.features.sharing[demo205.course.id] = .notAllowed
+        }
+        db.features.prepareNoteOnMonday = scenario == .weeklyNoteMonday
     }
 
     // MARK: - Debug controls (preview Debug menu, tests)
@@ -83,7 +89,7 @@ public actor MockService: PageLampService {
 
     // MARK: - Helpers
 
-    private func respond(_ name: String) async {
+    func respond(_ name: String) async {
         calls[name, default: 0] += 1
         await pause(timing.latency)
     }
@@ -93,7 +99,16 @@ public actor MockService: PageLampService {
         try? await Task.sleep(for: duration)
     }
 
-    private func courseIndex(_ reference: String) throws(PageLampFailure) -> Int {
+    /// A model run's step: held at the tests' gate (at the run's id), else a sync step's wait.
+    func generationStep(_ generationId: String, _ step: UInt32) async {
+        if let gate = timing.gate {
+            await gate.pass(SyncStepPosition(sourceId: generationId, step: step))
+        } else {
+            await pause(timing.syncStep)
+        }
+    }
+
+    func courseIndex(_ reference: String) throws(PageLampFailure) -> Int {
         if let index = db.courses.firstIndex(where: { $0.course.id == reference || $0.course.code == reference }) {
             return index
         }
@@ -119,8 +134,8 @@ public actor MockService: PageLampService {
         deadline.event.dueAt ?? deadline.event.startsAt
     }
 
-    private func deadlines(in courses: [MockCourse], daysAhead: Int, daysBack: Int) -> [Deadline] {
-        let t = now()
+    func deadlines(in courses: [MockCourse], daysAhead: Int, daysBack: Int, at date: Date? = nil) -> [Deadline] {
+        let t = date ?? now()
         let from = t.addingTimeInterval(-Double(daysBack) * 86_400)
         let to = t.addingTimeInterval(Double(daysAhead) * 86_400)
         return courses
@@ -133,15 +148,30 @@ public actor MockService: PageLampService {
     }
 
     /// "YYYY-MM-DD" of the day `days` after today, in the mock's calendar.
-    private func isoDay(daysFromToday days: Int) -> String {
+    func isoDay(daysFromToday days: Int) -> String {
         let day = calendar.date(byAdding: .day, value: days, to: calendar.startOfDay(for: now())) ?? now()
         return IsoDate.string(from: day, calendar: calendar)
     }
 
-    private static func aiMaterials(_ course: Course) -> AiMaterialsState {
+    static func aiMaterials(_ course: Course) -> AiMaterialsState {
         if course.aiPolicy == .prohibited { return .withheldByPolicy }
         if !course.aiAccess { return .turnedOff }
         return .readable
+    }
+
+    /// The course as the facade returns it: with the student's answer about sharing its materials
+    /// (`setCourseMaterialSharing`, and DEMO205's from `init`), which the mock keeps apart from
+    /// the fixture. Records are immutable, so a changed answer makes a new one.
+    func courseRecord(_ course: MockCourse) -> Course {
+        let record = course.course
+        guard let answer = db.features.sharing[record.id], answer != record.materialSharing else { return record }
+        return Course(
+            id: record.id, sourceId: record.sourceId, externalId: record.externalId, code: record.code,
+            name: record.name, termStart: record.termStart, termEnd: record.termEnd, termSource: record.termSource,
+            url: record.url, aiPolicy: record.aiPolicy, aiPolicyNote: record.aiPolicyNote, aiAccess: record.aiAccess,
+            materialSharing: answer, hidden: record.hidden, enrollmentActive: record.enrollmentActive,
+            updatedAt: record.updatedAt
+        )
     }
 
     /// Every week with a module or material, plus the current week, ascending (like Rust).
@@ -151,13 +181,13 @@ public actor MockService: PageLampService {
         return weeks.sorted()
     }
 
-    private func summary(_ course: MockCourse) -> CourseSummary {
+    func summary(_ course: MockCourse) -> CourseSummary {
         let upcoming = deadlines(in: [course], daysAhead: 21, daysBack: 0).filter { $0.event.kind != .classEvent }
         let aiMaterials = Self.aiMaterials(course.course)
         // Like the facade: "readable by your AI app" is 0 unless the AI may read materials.
         let readable = aiMaterials == .readable ? course.materials.filter { $0.textStatus == .ok }.count : 0
         return CourseSummary(
-            course: course.course,
+            course: courseRecord(course),
             aiMaterials: aiMaterials,
             timeline: course.timeline,
             lifecycle: MockCalendar.lifecycle(course.timeline, keptCurrentUntil: course.keptCurrentUntil),
@@ -238,7 +268,7 @@ public actor MockService: PageLampService {
         let cutoff = now().addingTimeInterval(-14 * 86_400)
         let isRecent = { (material: MaterialView) in (material.publishedAt ?? .distantPast) >= cutoff }
         return CourseOverview(
-            course: course.course,
+            course: courseRecord(course),
             aiMaterials: Self.aiMaterials(course.course),
             timeline: course.timeline,
             lifecycle: MockCalendar.lifecycle(course.timeline, keptCurrentUntil: course.keptCurrentUntil),
@@ -264,7 +294,7 @@ public actor MockService: PageLampService {
         guard let shown = week ?? course.timeline.currentWeek else {
             let cutoff = now().addingTimeInterval(-14 * 86_400)
             return WeekMaterials(
-                course: course.course,
+                course: courseRecord(course),
                 aiMaterials: aiMaterials,
                 week: nil,
                 requestedWeek: week,
@@ -278,7 +308,7 @@ public actor MockService: PageLampService {
         }
         let materials = course.materials.filter { $0.weekHint == shown }
         return WeekMaterials(
-            course: course.course,
+            course: courseRecord(course),
             aiMaterials: aiMaterials,
             week: shown,
             requestedWeek: week,
@@ -320,14 +350,14 @@ public actor MockService: PageLampService {
         let index = try courseIndex(reference)
         // The mock has no term dates: today + keepCurrentDays().
         db.courses[index].keptCurrentUntil = until ?? isoDay(daysFromToday: Int(keepCurrentDays()))
-        return db.courses[index].course
+        return courseRecord(db.courses[index])
     }
 
     public func clearKeepCourseCurrent(course reference: String) async throws(PageLampFailure) -> Course {
         await respond("clearKeepCourseCurrent")
         let index = try courseIndex(reference)
         db.courses[index].keptCurrentUntil = nil
-        return db.courses[index].course
+        return courseRecord(db.courses[index])
     }
 
     public func snoozeRemovalSuggestions(courses: [String], kind: SnoozeKind) async throws(PageLampFailure) {
@@ -369,7 +399,9 @@ public actor MockService: PageLampService {
         return StartupTasks(
             whatsNew: whatsNew,
             updateCheckDue: updates.prefs.autoCheck && updates.disclosureSeen && whatsNew == nil && checkIsOld,
-            updatedFrom: updates.upgraded ? updates.upgradedFrom : nil
+            updatedFrom: updates.upgraded ? updates.upgradedFrom : nil,
+            // Monday's note, at the caller's moment (MockService+Note).
+            prepareWeeklyNote: noteDue(at: date)
         )
     }
 

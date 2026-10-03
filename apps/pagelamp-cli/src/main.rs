@@ -11,6 +11,7 @@
 
 mod ai;
 mod course;
+mod features;
 mod text;
 
 use std::io::{BufRead, IsTerminal, Write};
@@ -95,6 +96,75 @@ enum Command {
     Ai {
         #[command(subcommand)]
         command: Option<ai::AiCommand>,
+    },
+    /// A study plan PageLamp writes with your chosen model (a draft to keep, or --save).
+    ///
+    /// On the ChatGPT or Claude plan it runs only from a terminal: for scheduled runs (cron),
+    /// choose an API key or a model on this computer.
+    Plan {
+        /// Days the plan covers (1-56; default 14).
+        #[arg(long)]
+        days: Option<u32>,
+        /// Study hours per week (default 10; at most 4 a day).
+        #[arg(long)]
+        hours: Option<u32>,
+        /// A day without study; repeatable.
+        #[arg(long = "off", value_enum)]
+        days_off: Vec<features::DayArg>,
+        /// Only this course (code, name or id); repeatable. Default: every active course.
+        #[arg(long = "course")]
+        courses: Vec<String>,
+        /// A note for the plan ("focus on the midterm"), at most 500 characters.
+        #[arg(long)]
+        note: Option<String>,
+        /// Go over the monthly budget for this run.
+        #[arg(long)]
+        over_budget: bool,
+        /// Keep the plan at once instead of showing a draft.
+        #[arg(long, conflicts_with = "accept")]
+        save: bool,
+        /// Keep a draft shown earlier (its id).
+        #[arg(long)]
+        accept: Option<String>,
+    },
+    /// Explain a week of a course from its materials, with your chosen model.
+    ///
+    /// On the ChatGPT or Claude plan it runs only from a terminal: for scheduled runs (cron),
+    /// choose an API key or a model on this computer.
+    Explain {
+        /// The course (code, name or id).
+        course: String,
+        /// The week (default: this week).
+        #[arg(long)]
+        week: Option<u32>,
+        /// Send a material the explanation left out (its id); repeatable.
+        #[arg(long)]
+        include: Vec<String>,
+        /// Go over the monthly budget for this run.
+        #[arg(long)]
+        over_budget: bool,
+        /// List the saved explanations instead.
+        #[arg(long)]
+        saved: bool,
+    },
+    /// Write your weekly note (a few sentences and three things to focus on) from your courses'
+    /// structure and your plan's progress, with your chosen model. No material text is sent.
+    ///
+    /// On the ChatGPT or Claude plan it runs only from a terminal: for scheduled runs (cron),
+    /// choose an API key or a model on this computer.
+    Note {
+        /// Go over the monthly budget for this run.
+        #[arg(long)]
+        over_budget: bool,
+        /// List the saved notes instead.
+        #[arg(long)]
+        saved: bool,
+    },
+    /// Reminders due now and the weekly digest (quiet when nothing is due; for cron).
+    Remind {
+        /// Print the weekly digest now.
+        #[arg(long)]
+        digest: bool,
     },
     /// Search your course materials.
     Search {
@@ -216,7 +286,8 @@ enum CourseCommand {
         /// Scan the syllabus for dates (no model).
         #[arg(long)]
         scan: bool,
-        /// Read the syllabus with the model chosen for syllabus reading.
+        /// Read the syllabus with the model chosen for syllabus reading. On the ChatGPT or
+        /// Claude plan only from a terminal (scheduled runs: an API key or a local model).
         #[arg(long)]
         read: bool,
         /// With --read: go over the monthly budget for this run.
@@ -230,7 +301,8 @@ enum CourseCommand {
         dismiss: Option<i64>,
     },
     /// Remove courses from PageLamp: hidden at once, their local data deleted after 7 days
-    /// (or now with --now). Your own folders are never changed. --dry-run shows what goes.
+    /// (or now with --now). Your own folders are never changed. Shows what goes, then asks;
+    /// --dry-run only shows it.
     Remove {
         /// The courses' codes, names or ids.
         #[arg(required = true)]
@@ -248,6 +320,9 @@ enum CourseCommand {
         /// with the local data (now with --now, else in 7 days; an undo keeps it).
         #[arg(long)]
         delete_backup: bool,
+        /// Don't show what goes or ask first (needed without a terminal, e.g. in a script).
+        #[arg(long)]
+        yes: bool,
     },
     /// Removed courses: undo within 7 days, restore by syncing again after that.
     Removed,
@@ -256,13 +331,17 @@ enum CourseCommand {
         /// The removed course's id (see `course removed`).
         removed_id: String,
     },
-    /// Delete removed courses' data now (or every due removal without ids).
+    /// Delete removed courses' data now (or every due removal without ids). Shows what goes,
+    /// then asks.
     Purge {
         /// The removed courses' ids (see `course removed`).
         removed_ids: Vec<String>,
         /// If the Trash can't take the downloaded files, delete them permanently.
         #[arg(long)]
         permanent: bool,
+        /// Don't show what goes or ask first (needed without a terminal, e.g. in a script).
+        #[arg(long)]
+        yes: bool,
     },
     /// Forget a purged course: the next sync brings it back.
     Forget {
@@ -693,6 +772,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     now,
                     keep_files,
                     delete_backup,
+                    yes,
                 } => {
                     let options = pagelamp_app::RemoveOptions {
                         reason: None,
@@ -700,7 +780,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                         purge_now: now,
                         delete_pre_update_backup: delete_backup,
                     };
-                    return course::remove(&app, courses, dry_run, options, json).await;
+                    return course::remove(&app, courses, dry_run, options, yes, json).await;
                 }
                 CourseCommand::Removed => return course::removed(&app, json),
                 CourseCommand::Restore { removed_id } => {
@@ -709,7 +789,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 CourseCommand::Purge {
                     removed_ids,
                     permanent,
-                } => return course::purge(&app, removed_ids, permanent, json).await,
+                    yes,
+                } => return course::purge(&app, removed_ids, permanent, yes, json).await,
                 CourseCommand::Forget { removed_id } => app.forget_removed_course(&removed_id)?,
                 CourseCommand::Policy {
                     course,
@@ -742,6 +823,62 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             println!("Saved.");
             Ok(())
         }
+        Command::Plan {
+            days,
+            hours,
+            days_off,
+            courses,
+            note,
+            over_budget,
+            save,
+            accept,
+        } => {
+            let app = open_app()?;
+            features::plan(
+                &app,
+                features::PlanArgs {
+                    days,
+                    hours,
+                    days_off,
+                    courses,
+                    note,
+                    over_budget,
+                    save,
+                    accept,
+                },
+                json,
+            )
+            .await
+        }
+        Command::Explain {
+            course,
+            week,
+            include,
+            over_budget,
+            saved,
+        } => {
+            let app = open_app()?;
+            features::explain(
+                &app,
+                features::ExplainArgs {
+                    course,
+                    week,
+                    include,
+                    over_budget,
+                    saved,
+                },
+                json,
+            )
+            .await
+        }
+        Command::Note { over_budget, saved } => {
+            let app = open_app()?;
+            features::note(&app, over_budget, saved, json).await
+        }
+        Command::Remind { digest } => {
+            let app = open_app()?;
+            features::remind(&app, digest, json)
+        }
         Command::Search {
             query,
             course,
@@ -773,6 +910,26 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 }
 
 // ----- helpers --------------------------------------------------------------------------------
+
+/// Ask on the terminal; with `--yes` (or answered "y") go on. Piped without `--yes`: stop, with
+/// nothing changed (what the question is about is printed before it).
+fn confirm(question: &str, yes: bool) -> anyhow::Result<()> {
+    if yes {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!("nothing changed: read the above, then run again with --yes to accept");
+    }
+    eprint!("{question} [y/N] ");
+    std::io::stderr().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        anyhow::bail!("nothing changed")
+    }
+}
 
 /// Read a secret: from the terminal without echo, or one line from stdin when piped.
 fn read_secret(prompt: &str) -> anyhow::Result<String> {

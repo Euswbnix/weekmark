@@ -245,8 +245,13 @@ pub enum LocalServerKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct LocalServer {
     pub kind: LocalServerKind,
+    /// The preset to pass to `add_model_provider` to add it (`ollama`, `lm_studio`).
+    pub preset: String,
     pub base_url: String,
     pub running: bool,
+    /// The provider already added for it (the same preset and address), if any. Always
+    /// `None` in `doctor`, which names no provider.
+    pub provider_id: Option<String>,
 }
 
 /// `doctor`'s AI facts (M1): whether keys are there — never a key — and whether the model
@@ -321,6 +326,10 @@ pub enum EstimateRequest {
     WeeklyExplanation {
         course: String,
         week: Option<u32>,
+        /// Materials to send although they look like assessments (`ExplainOptions.include`):
+        /// priced as the run with the same `include` sends them.
+        #[serde(default)]
+        include: Vec<String>,
     },
     WeeklyNote,
     CourseCalendar {
@@ -339,7 +348,8 @@ pub struct CostEstimate {
     pub repair_possible: bool,
     pub price_known: bool,
     /// What would stop the run if started now (over budget, price not acknowledged, a course
-    /// answered "not allowed", …).
+    /// answered "not allowed", a weekly note with nothing to write about, a study plan with no
+    /// course to plan for, …).
     pub would_block: Option<BlockReason>,
 }
 
@@ -459,6 +469,12 @@ pub enum GenEvent {
     Stage {
         stage: GenStage,
     },
+    /// What the run sends, once its context is built (no text): the courses and materials
+    /// (included, trimmed, left out), and the input tokens when they can be counted.
+    Context {
+        summary: pagelamp_core::ai_gate::ContextSummary,
+        input_tokens: Option<u64>,
+    },
     TextDelta {
         text: String,
     },
@@ -480,6 +496,8 @@ pub struct GenerationMeta {
     pub feature: AiFeature,
     pub backend_label: String,
     pub model: String,
+    /// The model ran on this computer.
+    pub on_device: bool,
     pub created_at: Timestamp,
     pub usage: TokenUsage,
     pub est_cost_micro_usd: Option<u64>,
@@ -577,7 +595,8 @@ pub struct SystemCodex {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CodexStatus {
     /// This build offers the ChatGPT plan (`CHATGPT_PLAN_OFFERED`). False: hide the ChatGPT card
-    /// and every ChatGPT copy; the rest of this status is only for clean-up.
+    /// and every ChatGPT copy; nothing was looked for or started, and the rest is neutral (not
+    /// installed, signed out, no Codex of the student's own).
     pub chatgpt_plan_offered: bool,
     pub runtime: CodexRuntime,
     pub outdated_action: CodexOutdatedAction,

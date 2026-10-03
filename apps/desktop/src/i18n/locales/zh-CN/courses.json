@@ -29,7 +29,9 @@
   "plan": {
     "title": "我的学习计划",
     "madeBy": "{{when}}由你的 AI 应用生成 · 覆盖 {{start}} 至 {{end}}",
+    "madeByPageLamp": "{{when}}由 {{product}} 生成 · 覆盖 {{start}} 至 {{end}}",
     "stale": "这份计划可能已经过时了，让你的 AI 应用重新做一份吧。",
+    "stalePageLamp": "这份计划可能已经过时，可以用 {{product}} 重新规划。",
     "notesLabel": "AI 应用的备注",
     "minutes": "{{count}} 分钟",
     "done": "已完成",
@@ -39,6 +41,8 @@
     "nothingSoon": "今天和接下来两天没有安排。",
     "noItems": "这份计划里还没有任务。",
     "readOnly": "这里仅供查看。想调整计划，直接跟你的 AI 应用说就行。",
+    "tickHint": "完成一项就勾掉一项。想调整计划，可以跟你的 AI 应用说，或者用 {{product}} 重新规划。",
+    "tickFailed": "没能勾选这项任务，请再试一次。",
     "emptyTitle": "还没有学习计划",
     "emptyDescription": "试着对你的 AI 应用说：“{{prompt}}”计划生成后会显示在这里。",
     "prompt": "帮我做一份接下来两周的学习计划。",

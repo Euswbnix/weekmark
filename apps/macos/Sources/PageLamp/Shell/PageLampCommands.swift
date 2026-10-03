@@ -163,6 +163,13 @@ struct DebugCommands: Commands {
         case .error: l10n("mac.debug.scenario.error")
         case .busy: l10n("mac.debug.scenario.busy")
         case .crashed: l10n("mac.debug.scenario.crashed")
+        case .aiKey: l10n("mac.debug.scenario.aiKey")
+        case .aiLocal: l10n("mac.debug.scenario.aiLocal")
+        case .aiUnpriced: l10n("mac.debug.scenario.aiUnpriced")
+        case .aiBudget: l10n("mac.debug.scenario.aiBudget")
+        case .aiDisclosureChanged: l10n("mac.debug.scenario.aiDisclosureChanged")
+        case .aiErrors: l10n("mac.debug.scenario.aiErrors")
+        case .weeklyNoteMonday: l10n("mac.debug.scenario.weeklyNoteMonday")
         }
     }
 }

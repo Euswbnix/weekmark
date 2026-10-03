@@ -9,6 +9,8 @@ export const WHATS_NEW: readonly (readonly [WhatsNewTopic, string])[] = [
   ["course_weeks", "0.3.0-alpha.1"],
   ["course_removal", "0.3.0-alpha.2"],
   ["syllabus_reading", "0.3.0-alpha.3"],
+  ["ai_writing", "0.3.0-beta.1"],
+  ["reminders", "0.3.0-beta.1"],
 ];
 
 /** The topics introduced after `since` (null: from 0.1, which recorded no version: all). */

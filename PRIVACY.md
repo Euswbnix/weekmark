@@ -20,6 +20,9 @@ who build PageLamp never receive your data.
 | **(v0.3)** API keys for model providers | your operating system's keychain — never in the database, logs or AI output | to use the provider on your behalf |
 | **(v0.3)** What PageLamp's AI features wrote for you, with its label (provider, model, date) and which materials were sent (their ids, never their text) | the same database; only the latest few of each kind are kept | so you can read it again and see where it came from |
 | **(v0.3)** One line per AI run: when, provider, model, feature, tokens and estimated cost | the same database, deleted after 13 months | for the usage and budget screens |
+| **(v0.3)** Your reminder settings (which reminders, on which day and at what time, and your answer to *Keep PageLamp in the tray and start it at login*) and the reminders already shown, with when each was shown (each by an id made of the reminder's kind and a deadline's id and due time, or of a date) | the same database; shown ids more than 60 days old are removed the next time a reminder is marked shown | so each reminder is shown once |
+| **(v0.3)** Whether to prepare your weekly note on Mondays, and the last Monday PageLamp tried to prepare it by itself | the same database | so PageLamp tries it by itself at most once a Monday |
+| **(v0.3)** A login item, if you turn on *Keep PageLamp in the tray and start it at login* | macOS `~/Library/LaunchAgents/dev.pagelamp.desktop.plist`; Windows the `PageLamp` value in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (Windows may also keep a `PageLamp` value under `…\Explorer\StartupApproved\Run`); Linux `~/.config/autostart/PageLamp.desktop` | to start PageLamp in the background when you log in |
 
 PageLamp does **not** store assignment instructions or submissions — only assignment titles, due
 dates and links. It never reads your university password.
@@ -46,7 +49,42 @@ dates and links. It never reads your university password.
     materials allowed?*. If you haven't answered that question, or answered "Not sure", PageLamp
     reminds you once per course (again after *Remove all AI data*), after the first reading that
     sent that course's materials to a model in the cloud.
+  - *Plan your study* sends the structure of your courses, never material text: for each visible,
+    active course (or each one you pick), its name, whether its AI settings let AI read its
+    materials, its current week, the titles and kinds of this and next week's materials (or of the
+    last 14 days' materials when its weeks aren't known), and the titles, kinds and dates of its
+    calendar items (deadlines, exams, classes) in the days you plan, with PageLamp's ids for the
+    course and those materials, which include your Canvas site's address or your folder and file
+    names. Courses whose AI access is off, whose AI policy is "No AI" or that you answered "No, it's
+    not allowed" for are planned from this structure too; hidden and removed courses are left out.
+    What you type in *Anything to focus on?* (up to 500 characters) is sent with it and not kept.
+  - *Explain a week* sends the text of one week of a course's materials (or of its last 14 days'
+    materials when the course's weeks aren't known), with the course's name, the week number and the
+    materials' titles. It never runs for a hidden course or a course whose AI access you turned off
+    or whose AI policy is "No AI", nor with a model in the cloud for a course you answered "No, it's
+    not allowed" for. It leaves out links to other sites, materials without readable text, materials
+    whose titles look like graded work (assignments, quizzes, exams…) unless you include them, and
+    whatever goes over its length limit. The one-time sharing reminder above can come after an
+    explanation instead, if it sent that course's materials to a model in the cloud first.
+  - The *Weekly note* sends the same kind of structure, never material text, whatever each course's
+    AI settings: your visible, active courses (with where each is in its term, such as a break), the
+    calendar items (deadlines, exams, classes) in the next 7 days of your other visible courses, and
+    your study plan's progress (how many of the last 7 days' items you ticked, and today's items'
+    titles and whether they're ticked). You start it with *Write my weekly note* (*Write a new note*
+    once you have one). If you turn on *Prepare my weekly note when I open PageLamp on Monday*,
+    which works only with a model you added yourself (an API key or a model on this computer),
+    PageLamp also starts it itself on Mondays while it runs (at launch, or within the hour if it's
+    already running), unless you already wrote one that day: one try a Monday whatever the result,
+    and never when its estimated cost would take you over your monthly budget (a model without a
+    known price isn't limited by the budget).
   - Listing a provider's models asks that provider for them, and *Test* sends it one tiny request.
+- **(v0.3) Reminders** stay on your computer: PageLamp works them out from what it already has, with
+  no model and no network request, and shows them as notifications only if you turned them on (see
+  below). A reminder notification holds only a course code (or the course's name if it has no code)
+  with a deadline's title and the day and time it is due, or a count of deadlines or of today's plan
+  items — never the text of your materials. The one notification you get when you turn reminders on
+  only says that they are on. The tray icon and the login item make no network requests of their
+  own.
 - **(v0.3) Update check:** once a day PageLamp downloads a small file from GitHub to see whether
   there's a new version. GitHub sees your IP address and your PageLamp version, as with any
   download; nothing about your courses is sent. The request carries only `User-Agent:
@@ -70,6 +108,23 @@ dates and links. It never reads your university password.
   keys, your model choices, the usage history, the AI settings, everything PageLamp's AI wrote, and
   the pre-update backup of the database (which may hold them); your courses and your answers about
   sharing stay.
+- **(v0.3) Reminder notifications, the tray icon and starting at login:** off until you answer *Yes,
+  remind me* in onboarding or turn on *Settings → Reminders → Keep PageLamp in the tray and start it
+  at login*. Until then, reminders that came due show only inside PageLamp, under *Since you last
+  opened PageLamp*. With it on, PageLamp shows a tray icon (on Linux only if an AppIndicator library
+  is installed), closing its window keeps it running, and a login item (see the table above) starts
+  it in the background, in the tray, when you log in. You can then turn reminders for deadlines,
+  your week and today's study plan on or off one by one (the first two are on by default). Turning
+  the switch off stops the notifications and removes the tray icon and the login item; from the next
+  time you open PageLamp, reminders that are still due show only inside it, under *Since you last
+  opened PageLamp*. Hidden and removed courses get no deadline reminders. Uninstalling PageLamp
+  removes the login item on Windows. On macOS and Linux it stays behind: turn the switch off before
+  you delete PageLamp, or delete that file yourself.
+- **(v0.3) Plans, explanations and weekly notes:** *Delete…* removes one explanation or weekly
+  note. Turn off *Settings → Weekly note → Prepare my weekly note when I open PageLamp on Monday*
+  to stop the Monday note. A plan you chose to use (*Use this plan*) becomes your study plan:
+  *Remove all AI data* keeps it, with its AI label. Removing a course doesn't delete the weekly
+  notes or plan drafts that mention it.
 - **Remove a source** (`pagelamp sources remove <id>` or *Sources & sync → Remove*) deletes what
   was synced from it — its courses with your AI-policy and term settings for them (course folder
   and Canvas), its deadlines and events (calendar feed), and for Canvas the course files you
@@ -109,9 +164,12 @@ dates and links. It never reads your university password.
 PageLamp does not generate content itself in v0.1. **(v0.3)** It can also write with a model you
 choose (for example, reading a syllabus for the course's dates): what it writes is labelled
 AI-generated, with the provider, the model and the date, and a syllabus reading is a proposal you
-check before accepting it. Text your AI app produces is AI-generated by that app. PageLamp tells
-your AI app to cite course sources, tutor rather than produce graded work, and respect each
-course's AI policy — but you are responsible for following your course and university rules.
+check before accepting it. **(v0.3)** Study plans, explanations and weekly notes carry the same
+label, and PageLamp drops plan tasks and weekly-note focus items whose wording looks like doing
+graded work (such as "Write A2's answers"). Text your AI app produces is AI-generated by that app.
+PageLamp tells your AI app to cite course sources, tutor rather than produce graded work, and
+respect each course's AI policy — but you are responsible for following your course and university
+rules.
 
 ## Logs and diagnostic reports
 

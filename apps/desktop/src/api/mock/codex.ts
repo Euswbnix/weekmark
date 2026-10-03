@@ -214,7 +214,8 @@ export function createMockCodex(options: {
 
   function status(): CodexStatus {
     return structuredClone({
-      // As `aiStatus` (mock/ai.ts). The rest still answers, for clean-up.
+      // As `aiStatus` (mock/ai.ts). Not offered: like the facade, nothing was looked for (no
+      // Codex of the student's own), and these scenarios start not installed and signed out.
       chatgpt_plan_offered: offered,
       runtime: {
         state: state.installed ? "installed" : "not_installed",
@@ -229,7 +230,7 @@ export function createMockCodex(options: {
       exec_available: state.execAvailable,
       weekly_cap: state.cap,
       runs_this_week: state.runs,
-      system_codex: { version: "0.156.0", in_tested_range: false },
+      system_codex: offered ? { version: "0.156.0", in_tested_range: false } : null,
     } satisfies CodexStatus);
   }
 

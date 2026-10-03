@@ -328,12 +328,15 @@ impl Course {
 
     /// "CSC413H1 — Neural Networks and Deep Learning" or just the name.
     pub fn display_name(&self) -> String {
-        match &self.code {
-            Some(code) if !self.name.starts_with(code.as_str()) => {
-                format!("{code} — {}", self.name)
-            }
-            _ => self.name.clone(),
-        }
+        course_display_name(self.code.as_deref(), &self.name)
+    }
+}
+
+/// "CODE — Name", or the name alone when it starts with the code or there is none.
+pub(crate) fn course_display_name(code: Option<&str>, name: &str) -> String {
+    match code {
+        Some(code) if !name.starts_with(code) => format!("{code} — {name}"),
+        _ => name.to_string(),
     }
 }
 
@@ -763,11 +766,38 @@ pub struct StudyPlan {
     pub notes: Option<String>,
 }
 
+/// Who made a saved plan.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum PlanOrigin {
+    /// The student's AI app, over MCP (`save_study_plan`).
+    #[default]
+    #[serde(rename = "ai_app")]
+    AiApp,
+    /// PageLamp's own model run, accepted by the student (`accept_study_plan`).
+    #[serde(rename = "pagelamp")]
+    PageLamp,
+}
+
+impl PlanOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlanOrigin::AiApp => "ai_app",
+            PlanOrigin::PageLamp => "pagelamp",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct StoredStudyPlan {
     pub id: i64,
     pub created_at: Timestamp,
     pub plan: StudyPlan,
+    pub origin: PlanOrigin,
+    /// The PageLamp run it came from (`origin = pagelamp`), until "Remove all AI data".
+    pub generation_id: Option<String>,
+    /// "AI-generated · backend · model · date" (`origin = pagelamp`): kept with the plan, also
+    /// after "Remove all AI data" (compliance item 4). `None` for a plan from the AI app.
+    pub ai_label: Option<crate::term::AiLabel>,
 }
 
 #[cfg(test)]

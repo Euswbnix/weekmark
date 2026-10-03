@@ -262,7 +262,7 @@
     "course_policy_prohibited": "这门课的规则是“禁止使用 AI”，所以 {{product}} 不会发送它的任何内容。",
     "course_ai_turned_off": "你已经为这门课的资料关闭了 AI。",
     "course_hidden": "这门课已被隐藏。",
-    "no_readable_materials": "这一周没有 {{product}} 能读取的资料。",
+    "no_readable_materials": "没有 {{product}} 能读取的资料。",
     "material_sharing_not_allowed": "你表示这门课的资料不能分享给 AI 服务，所以没有发送任何内容。",
     "coding_plan_key": "这个密钥属于编程订阅，{{product}} 不能使用。",
     "disclosure_not_acknowledged": "先查看这个服务会收到哪些内容，然后启用它。",
@@ -270,7 +270,9 @@
     "budget_reached": "这次运行会超出本月预算。",
     "price_unknown_not_acknowledged": "{{product}} 没有这个模型的价格。确认后可在不执行预算的情况下使用。",
     "weekly_run_cap_reached": "已达到本周的运行次数上限。",
-    "backend_disabled_in_this_build": "这个版本的 {{product}} 不提供这个服务。"
+    "backend_disabled_in_this_build": "这个版本的 {{product}} 不提供这个服务。",
+    "nothing_to_write": "这周还没有可写的内容：没有进行中的课程，未来 7 天内没有截止日期，也没有学习计划项。",
+    "no_course_to_plan": "没有可以规划的进行中课程。"
   },
   "modelError": {
     "not_signed_in": "你还没有登录这个服务。",

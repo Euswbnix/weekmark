@@ -27,6 +27,7 @@
   "tabs": {
     "label": "Course sections",
     "week": "This week",
+    "explain": "Explain",
     "timeline": "Timeline",
     "deadlines": "Deadlines",
     "policy": "AI policy",

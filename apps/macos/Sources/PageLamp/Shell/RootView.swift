@@ -7,6 +7,7 @@ import PageLampModel
 public struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.l10n) private var l10n
+    @Environment(\.openWindow) private var openWindow
 
     /// Restored per window (spec §2.4): the destination and whether the inspector is open.
     @SceneStorage("destination") private var storedDestination = ""
@@ -44,6 +45,9 @@ public struct RootView: View {
         }
         .task {
             restore()
+            // A click on a reminder's notification opens this window, also after it was closed.
+            let openWindow = self.openWindow
+            model.openMainWindow = { openWindow(id: PageLampScenes.mainWindowID) }
             await model.start()
             await PerfProbe.runIfRequested(model: model)  // no-op unless PAGELAMP_PERF_PROBE is set
         }

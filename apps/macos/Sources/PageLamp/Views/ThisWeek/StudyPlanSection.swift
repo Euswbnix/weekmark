@@ -1,8 +1,9 @@
-// Your study plan (spec §3.1): the latest plan the student's AI app saved over MCP
-// (`save_study_plan`), read-only. Today and the next two days up front, the rest behind Show Full
-// Plan; static done / not-done glyphs; the AI app's notes in a callout; a stale warning; and
-// "Read-only here. To change the plan, ask your AI app." S12: no plan yet → the prompt to ask
-// for one. S14: the plan failed to load.
+// Your study plan (spec §3.1): the latest plan, saved by the student's AI app over MCP
+// (`save_study_plan`) or written by PageLamp (M3, with its AI-generated line), read-only. Today and
+// the next two days up front, the rest behind Show Full Plan; static done / not-done glyphs; the
+// AI app's notes in a callout; a stale warning; and who to ask for a change. S12: no plan yet →
+// the prompt to ask for one. S14: the plan failed to load. Where PageLamp writes plans (M3,
+// preview builds until it ships): Plan with PageLamp… opens the Plan sheet.
 
 import SwiftUI
 import PageLampKit
@@ -14,6 +15,8 @@ struct StudyPlanSection: View {
     @Environment(AppModel.self) private var model
     @Environment(\.l10n) private var l10n
     @State private var expanded: Bool
+    /// The Plan sheet, while it's open.
+    @State private var planning: PlanModel?
 
     init(text: ThisWeekText, expanded: Bool = false) {
         self.text = text
@@ -32,6 +35,33 @@ struct StudyPlanSection: View {
             } else {
                 StudyPlanEmpty()
             }
+            // Not while the courses couldn't be read: the sheet would say none is active.
+            if model.aiPlan, model.sectionErrors[.courses] == nil {
+                Button {
+                    planning = PlanModel(service: model.service, courses: model.courses)
+                } label: {
+                    Label(l10n("plan.entry"), systemImage: "sparkles")
+                }
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { planning != nil },
+            set: { shown in
+                if !shown {
+                    planning?.close()
+                    planning = nil
+                }
+            }
+        )) {
+            if let planning {
+                PlanSheet(plan: planning) { stored in
+                    if let stored {
+                        Task { await model.studyPlanSaved(stored) }
+                    }
+                    self.planning = nil
+                }
+                .pageLampEnvironment(model)
+            }
         }
     }
 
@@ -49,9 +79,16 @@ struct StudyPlanSection: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                // Written by PageLamp: the AI-generated line (Canvas §2E), kept with the plan.
+                if let label = stored.aiLabel {
+                    Text(l10n.aiLabel(label, calendar: model.calendar))
+                        .font(PLType.callout.font)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if digest.isStale {
                     Label {
-                        Text(l10n("courses.plan.stale"))
+                        Text(l10n(stored.origin == .pageLamp ? "courses.plan.stalePageLamp" : "courses.plan.stale"))
                             .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "clock")
@@ -84,7 +121,7 @@ struct StudyPlanSection: View {
                 }
             }
 
-            Text(l10n("courses.plan.readOnly"))
+            Text(l10n(stored.origin == .pageLamp ? "mac.plan.readOnly" : "courses.plan.readOnly"))
                 .font(PLType.callout.font)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

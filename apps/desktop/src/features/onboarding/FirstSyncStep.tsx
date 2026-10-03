@@ -6,10 +6,14 @@ import type { SyncSummary } from "@/api/types";
 import { PageHeader } from "@/components/common/PageHeader";
 import { Button } from "@/components/ui/button";
 import { TemporaryLocationWarning } from "@/features/connect/TemporaryLocationWarning";
+import { REMINDERS_UI } from "@/features/reminders/availability";
+import { RemindMeCard } from "@/features/reminders/RemindMeCard";
 import { SyncProgressPanel } from "@/features/sources/SyncProgressPanel";
 import { useSyncOutcome } from "@/features/sources/useSyncOutcome";
+import { AI_SETUP_ENABLED } from "@/lib/features";
 import { paths } from "@/lib/routes";
 import { useStartSync, useSyncStore } from "@/stores/sync";
+import { AiOfferCard } from "./AiOfferCard";
 
 const COPY = {
   running: { title: "sync.title", description: "sync.description" },
@@ -67,6 +71,13 @@ export function FirstSyncStep({ onBack }: { onBack: () => void }) {
       <PageHeader title={t(copy.title)} description={description} />
       <div className="space-y-6">
         <SyncProgressPanel onRetry={run} showFixLink />
+
+        {REMINDERS_UI ? <RemindMeCard /> : null}
+
+        {/* Once the courses are in: what PageLamp could write about them. */}
+        {AI_SETUP_ENABLED && (view === "done" || view === "doneWithErrors") ? (
+          <AiOfferCard />
+        ) : null}
 
         {(view === "done" || view === "doneWithErrors") && summary ? (
           <SummaryStats summary={summary} />

@@ -1,0 +1,21 @@
+{
+  "ai": {
+    "addKey": "Add an API Key…",
+    "turnOn": "Review and Turn On…",
+    "whatsShared": "What's Shared…",
+    "replaceKey": "Replace Key…",
+    "remove": "Remove…",
+    "lookAgain": "Look Again",
+    "checkAndAdd": "Check and Add",
+    "checkAndReplace": "Check and Replace",
+    "saveBudget": "Save Budget",
+    "removeAll": "Remove All AI Data…",
+    "removeAllConfirm": "Remove All",
+    "turnOnName": "Turn On {{name}}",
+    "notNow": "Not Now",
+    "useUnpriced": "Use It Anyway",
+    "sharingAllowed": "Yes, It's Allowed",
+    "sharingNotSure": "Not Sure",
+    "sharingNotAllowed": "No, It's Not Allowed"
+  }
+}

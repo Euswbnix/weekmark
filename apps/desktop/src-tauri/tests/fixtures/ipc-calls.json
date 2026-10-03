@@ -223,6 +223,10 @@
     }
   },
   {
+    "cmd": "snooze_calendar_offers",
+    "args": {}
+  },
+  {
     "cmd": "clear_removal_snooze",
     "args": {
       "courses": [
@@ -372,6 +376,114 @@
     }
   },
   {
+    "cmd": "explain_week",
+    "args": {
+      "course": "folder:contract-test/course/DEMO101",
+      "week": 4,
+      "generationId": "contract-test-explanation",
+      "options": {
+        "include": [
+          "contract-test-material"
+        ],
+        "ui_language": "en",
+        "override_budget": false
+      },
+      "onEvent": "__CHANNEL__:0"
+    }
+  },
+  {
+    "cmd": "saved_explanations",
+    "args": {
+      "course": "folder:contract-test/course/DEMO101",
+      "week": 4
+    }
+  },
+  {
+    "cmd": "delete_explanation",
+    "args": {
+      "generationId": "contract-test-explanation"
+    }
+  },
+  {
+    "cmd": "ai_output_language",
+    "args": {}
+  },
+  {
+    "cmd": "set_ai_output_language",
+    "args": {
+      "language": "course"
+    }
+  },
+  {
+    "cmd": "generate_study_plan",
+    "args": {
+      "request": {
+        "horizon_days": 14,
+        "hours_per_week": 10,
+        "days_off": [
+          "saturday"
+        ],
+        "courses": [
+          "folder:contract-test/course/DEMO101"
+        ],
+        "note": "contract test",
+        "override_budget": false
+      },
+      "generationId": "contract-test-plan",
+      "onEvent": "__CHANNEL__:0"
+    }
+  },
+  {
+    "cmd": "plan_limits",
+    "args": {}
+  },
+  {
+    "cmd": "accept_study_plan",
+    "args": {
+      "generationId": "contract-test-plan"
+    }
+  },
+  {
+    "cmd": "set_study_plan_item_done",
+    "args": {
+      "planId": 1,
+      "itemIndex": 0,
+      "done": true
+    }
+  },
+  {
+    "cmd": "write_weekly_note",
+    "args": {
+      "generationId": "contract-test-note",
+      "options": {
+        "automatic": false,
+        "override_budget": false,
+        "ui_language": "en"
+      },
+      "onEvent": "__CHANNEL__:0"
+    }
+  },
+  {
+    "cmd": "weekly_notes",
+    "args": {}
+  },
+  {
+    "cmd": "delete_weekly_note",
+    "args": {
+      "generationId": "contract-test-note"
+    }
+  },
+  {
+    "cmd": "weekly_note_settings",
+    "args": {}
+  },
+  {
+    "cmd": "set_prepare_weekly_note_on_monday",
+    "args": {
+      "on": true
+    }
+  },
+  {
     "cmd": "open_material",
     "args": {
       "materialId": "contract-test-material"
@@ -469,6 +581,72 @@
   {
     "cmd": "last_update_check",
     "args": {}
+  },
+  {
+    "cmd": "reminder_settings",
+    "args": {}
+  },
+  {
+    "cmd": "set_reminder_settings",
+    "args": {
+      "settings": {
+        "deadline_soon": true,
+        "weekly_digest": true,
+        "digest_day": "monday",
+        "digest_time": "09:00",
+        "plan_today": false,
+        "plan_today_time": "08:00",
+        "run_in_background": false
+      }
+    }
+  },
+  {
+    "cmd": "background_status",
+    "args": {}
+  },
+  {
+    "cmd": "set_tray_labels",
+    "args": {
+      "labels": {
+        "open": "Open PageLamp",
+        "quit": "Quit PageLamp"
+      }
+    }
+  },
+  {
+    "cmd": "due_reminders",
+    "args": {}
+  },
+  {
+    "cmd": "show_reminders",
+    "args": {
+      "notifications": [
+        {
+          "id": "contract-test-reminder",
+          "title": "DEMO101: Quiz",
+          "body": "Due"
+        }
+      ]
+    }
+  },
+  {
+    "cmd": "mark_reminders_shown",
+    "args": {
+      "ids": [
+        "contract-test-reminder"
+      ]
+    }
+  },
+  {
+    "cmd": "open_notification_settings",
+    "args": {}
+  },
+  {
+    "cmd": "show_reminders_on_notice",
+    "args": {
+      "title": "Reminders are on",
+      "body": "contract test"
+    }
   },
   {
     "cmd": "ai_status",

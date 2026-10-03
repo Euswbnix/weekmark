@@ -41,5 +41,12 @@
     "goToCourses": "查看我的课程",
     "continueInBackground": "在后台继续",
     "backgroundHint": "同步会继续进行，进度显示在侧边栏里。"
+  },
+  "aiOffer": {
+    "title": "让 {{product}} 写学习计划和讲解",
+    "body": "用你选的模型，{{product}} 可以帮你安排一周的学习，也可以讲解某一周的材料，并注明读过的页码。在你设置好一个模型、并看过它会收到哪些内容之前，不会有任何内容发给 AI 服务。",
+    "setUp": "设置模型",
+    "notNow": "暂不",
+    "later": "随时可以在「设置 → AI 模型」里设置。"
   }
 }

@@ -60,9 +60,9 @@ struct CourseWeekLineTests {
         #expect(line.tagText(l10n(.simplifiedChinese)) == chinese)
     }
 
-    @Test("Deadlines and Timeline always show the current week, and VoiceOver can't step it there")
+    @Test("Deadlines, Timeline and Explain always show the current week, and VoiceOver can't step it there")
     func otherSections() {
-        for section in [CourseSection.deadlines, .timeline] {
+        for section in [CourseSection.deadlines, .timeline, .explain] {
             let line = CourseWeekLine(section: section, selectedWeek: 7, currentWeek: 4, outsideTerm: false)
             #expect(line.week == 4)
             #expect(line.lit)

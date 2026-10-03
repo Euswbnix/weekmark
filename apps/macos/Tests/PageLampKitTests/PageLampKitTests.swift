@@ -479,4 +479,21 @@ struct PageLampKitTests {
             atPath: TestEnvironment.root.appending(path: "diagnostics/logs").path(percentEncoded: false)
         ))
     }
+
+    @Test("Progress streams keep the run's order and drop events after finish()")
+    func progressStreams() async {
+        let stream = GenEventStream()
+        stream.onEvent(event: .stage(stage: .buildingContext))
+        stream.onEvent(event: .stage(stage: .waitingForModel))
+        stream.finish()
+        // A consumer that stopped listening: later events go nowhere, and nothing blocks.
+        stream.onEvent(event: .stage(stage: .validating))
+        var seen: [GenEvent] = []
+        for await event in stream.events { seen.append(event) }
+        #expect(seen == [.stage(stage: .buildingContext), .stage(stage: .waitingForModel)])
+        // Each stream is its call's observer.
+        let _: any CalendarBatchObserver = CalendarBatchEventStream()
+        let _: any CodexInstallObserver = CodexInstallEventStream()
+        let _: any CodexLoginObserver = CodexLoginEventStream()
+    }
 }

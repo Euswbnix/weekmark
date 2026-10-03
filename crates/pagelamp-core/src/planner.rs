@@ -290,6 +290,107 @@ fn clip(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
+/// Words naming graded work ("A2", "HW3", "PS1" and "Q4" count too).
+const GRADED_WORDS: [&str; 14] = [
+    "assignment",
+    "assignments",
+    "homework",
+    "hw",
+    "pset",
+    "quiz",
+    "exam",
+    "midterm",
+    "test",
+    "lab",
+    "project",
+    "essay",
+    "report",
+    "paper",
+];
+/// Verbs that produce work when their object is an answer, a solution or a write-up.
+const PRODUCE_VERBS: [&str; 9] = [
+    "write", "draft", "produce", "compose", "complete", "finish", "do", "fill", "submit",
+];
+/// What producing graded work makes.
+const OUTPUT_NOUNS: [&str; 12] = [
+    "answer",
+    "answers",
+    "solution",
+    "solutions",
+    "response",
+    "responses",
+    "essay",
+    "report",
+    "code",
+    "submission",
+    "questions",
+    "problems",
+];
+/// Words that make it study (practice material, going over posted solutions).
+const PRACTICE_WORDS: [&str; 5] = ["practice", "sample", "past", "mock", "old"];
+const STUDY_VERBS: [&str; 6] = ["review", "reviewing", "read", "reread", "study", "check"];
+
+/// Whether a task produces graded work: it names graded work ("A2", "quiz", "essay"…) and asks
+/// for answers, solutions or a write-up of it ("Write A2's answers", "Solve HW3", "Quiz 4
+/// solutions"). Practice material ("Solve the practice midterm") and going over posted
+/// solutions ("Review the quiz 3 solutions") are study (design §5.1; M3 DoD 1). The plan never
+/// contains such a task, whatever the model proposed.
+pub fn produces_graded_work(task: &PlanTask) -> bool {
+    text_produces_graded_work(&task.title, task.description.as_deref())
+}
+
+/// `produces_graded_work` for any title and description (a weekly note's focus items too).
+pub fn text_produces_graded_work(title: &str, description: Option<&str>) -> bool {
+    let text = format!("{title} {}", description.unwrap_or(""));
+    let words: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    let numbered = |w: &str, prefix: &str| {
+        w.strip_prefix(prefix)
+            .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+    };
+    let graded = words.iter().any(|w| {
+        GRADED_WORDS.contains(&w.as_str())
+            || ["a", "hw", "ps", "q"]
+                .iter()
+                .any(|prefix| numbered(w, prefix))
+    }) || text.to_lowercase().contains("problem set");
+    if !graded || words.iter().any(|w| PRACTICE_WORDS.contains(&w.as_str())) {
+        return false;
+    }
+    // The first cue that asks for the work itself.
+    let cue = words.iter().enumerate().position(|(i, w)| {
+        // "answer(s)", "solution(s)" themselves, or "solve".
+        OUTPUT_NOUNS[..4].contains(&w.as_str())
+            || w == "solve"
+            || (PRODUCE_VERBS.contains(&w.as_str())
+                && words[i + 1..]
+                    .iter()
+                    .take(4)
+                    .any(|next| OUTPUT_NOUNS.contains(&next.as_str())))
+    });
+    // Going over something first ("Review the posted solutions") is study.
+    cue.is_some_and(|at| {
+        !words[..at]
+            .iter()
+            .any(|w| STUDY_VERBS.contains(&w.as_str()))
+    })
+}
+
+/// `tasks` without the ones that produce graded work (`produces_graded_work`), and how many
+/// were left out.
+pub fn without_graded_work(tasks: Vec<PlanTask>) -> (Vec<PlanTask>, u32) {
+    let before = tasks.len();
+    let kept: Vec<PlanTask> = tasks
+        .into_iter()
+        .filter(|task| !produces_graded_work(task))
+        .collect();
+    let left_out = u32::try_from(before - kept.len()).unwrap_or(u32::MAX);
+    (kept, left_out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,5 +579,180 @@ mod tests {
             50
         );
         assert_eq!(output.plan.horizon_end, day(5) + Duration::days(55));
+    }
+
+    fn titled(title: &str) -> PlanTask {
+        PlanTask {
+            course_id: None,
+            kind: TaskKind::PrepareDeadline,
+            title: title.into(),
+            description: None,
+            material_ids: Vec::new(),
+            minutes: 30,
+            priority: TaskPriority::Normal,
+            earliest: None,
+            latest: None,
+        }
+    }
+
+    /// Prompt fixtures: what a plan may and may not contain (design §5.1; M3 DoD 1).
+    #[test]
+    fn tasks_that_produce_graded_work_are_left_out() {
+        for title in [
+            "Write A2's answers",
+            "A2 answers: questions 1-4",
+            "Solve HW3 problems 2 and 5",
+            "Draft the essay for Assignment 1",
+            "Quiz 4 solutions",
+            "Complete the A3 questions",
+            "Write the lab report",
+            "Finish problem set 2 answers",
+            "Answer the midterm questions",
+        ] {
+            assert!(produces_graded_work(&titled(title)), "{title}");
+        }
+        for title in [
+            "Start A2 (due Oct 14): re-read week 4 slides",
+            "Prepare for quiz 3: review lectures 5-6",
+            "Solve the practice midterm",
+            "Review the posted quiz 3 solutions",
+            "Read chapter 4 before the lab",
+            "Work through past exam questions",
+            "Catch up on week 2 readings",
+            "Review lecture notes before writing the lab report",
+            "Practice problems on derivatives",
+        ] {
+            assert!(!produces_graded_work(&titled(title)), "{title}");
+        }
+        // The description counts too.
+        let mut sneaky = titled("Assignment 2");
+        sneaky.description = Some("Write the answers to questions 1-3.".into());
+        assert!(produces_graded_work(&sneaky));
+        let (kept, left_out) = without_graded_work(vec![
+            titled("Write A2's answers"),
+            titled("Re-read week 4 slides"),
+        ]);
+        assert_eq!((kept.len(), left_out), (1, 1));
+    }
+
+    /// A tiny deterministic generator (xorshift64*), so the property test needs no crate.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n.max(1)
+        }
+    }
+
+    /// Scheduler properties over random tasks and settings: every item lies inside the horizon,
+    /// its task's window and a study day; no day holds more than its capacity; limits hold; every
+    /// task is either placed in full or unscheduled.
+    #[test]
+    fn random_plans_keep_every_date_inside_the_horizon_and_capacity() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let weekdays = [
+            Weekday::Mon,
+            Weekday::Tue,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Fri,
+            Weekday::Sat,
+            Weekday::Sun,
+        ];
+        let known_materials: HashSet<String> = ["m1", "m2", "m3"].map(String::from).into();
+        let known_courses: HashSet<String> = ["c1", "c2"].map(String::from).into();
+        for round in 0..300 {
+            let start = day(1) + Duration::days(rng.below(30) as i64);
+            let horizon_days = 1 + rng.below(u64::from(MAX_HORIZON_DAYS)) as u32;
+            let hours_per_week = rng.below(40) as u32;
+            let days_off: Vec<Weekday> = weekdays
+                .iter()
+                .copied()
+                .filter(|_| rng.below(4) == 0)
+                .collect();
+            let tasks: Vec<PlanTask> = (0..rng.below(30))
+                .map(|i| {
+                    let earliest = (rng.below(3) == 0)
+                        .then(|| start + Duration::days(rng.below(70) as i64 - 7));
+                    let latest = (rng.below(2) == 0)
+                        .then(|| start + Duration::days(rng.below(70) as i64 - 7));
+                    PlanTask {
+                        course_id: ["c1", "c2", "c9"]
+                            .get(rng.below(4) as usize)
+                            .map(|c| (*c).to_string()),
+                        kind: [
+                            TaskKind::Read,
+                            TaskKind::Review,
+                            TaskKind::Practice,
+                            TaskKind::PrepareDeadline,
+                            TaskKind::CatchUp,
+                        ][rng.below(5) as usize],
+                        title: format!("Task {i}."),
+                        description: None,
+                        material_ids: vec!["m1".into(), "m9".into()],
+                        minutes: rng.below(600) as u32,
+                        priority: [TaskPriority::High, TaskPriority::Normal, TaskPriority::Low]
+                            [rng.below(3) as usize],
+                        earliest,
+                        latest,
+                    }
+                })
+                .collect();
+            let input = PlannerInput {
+                start,
+                horizon_days,
+                hours_per_week,
+                days_off: &days_off,
+                known_material_ids: &known_materials,
+                known_course_ids: &known_courses,
+            };
+            let out = schedule(&tasks, &input);
+            let end = start + Duration::days(i64::from(horizon_days) - 1);
+            let study_days = 7 - days_off.len() as u32;
+            let per_day = (hours_per_week * 60)
+                .checked_div(study_days)
+                .unwrap_or(0)
+                .min(MAX_MINUTES_PER_DAY);
+            let mut used: BTreeMap<NaiveDate, u32> = BTreeMap::new();
+            for item in &out.plan.items {
+                assert!(
+                    start <= item.date && item.date <= end,
+                    "round {round}: {item:?}"
+                );
+                assert!(!days_off.contains(&item.date.weekday()), "round {round}");
+                *used.entry(item.date).or_default() += item.minutes.unwrap_or(0);
+                assert!(
+                    item.material_ids
+                        .iter()
+                        .all(|m| known_materials.contains(m))
+                );
+                assert!(
+                    item.course_id
+                        .as_ref()
+                        .is_none_or(|c| known_courses.contains(c))
+                );
+                // Inside its own task's window.
+                let task = tasks
+                    .iter()
+                    .find(|t| item.title.starts_with(&t.title))
+                    .expect("an item comes from a task");
+                assert!(
+                    task.earliest.is_none_or(|e| e <= item.date),
+                    "round {round}"
+                );
+                assert!(task.latest.is_none_or(|l| item.date <= l), "round {round}");
+            }
+            for (date, minutes) in used {
+                assert!(minutes <= per_day, "round {round}: {date} holds {minutes}");
+            }
+            assert!(out.plan.items.len() <= MAX_PLAN_ITEMS);
+            assert_eq!((out.plan.horizon_start, out.plan.horizon_end), (start, end));
+        }
     }
 }

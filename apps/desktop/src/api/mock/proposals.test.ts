@@ -58,6 +58,18 @@ describe("mock calendar proposals", () => {
     expect(offers).toEqual([UNLABELLED, FITTED].sort());
   });
 
+  it("hides the offers for 14 days after Not now, on the card and at startup", async () => {
+    let clock = new Date(2026, 8, 28, 10, 0);
+    const api = createMockApi({ ...fast, now: () => clock });
+    expect((await api.syllabusReadingOffers()).length).toBeGreaterThan(0);
+    await api.snoozeCalendarOffers();
+    expect(await api.syllabusReadingOffers()).toEqual([]);
+    expect((await api.startupTasks()).calendar_offers).toEqual([]);
+    clock = new Date(2026, 9, 13, 10, 0); // 15 days later
+    expect((await api.syllabusReadingOffers()).length).toBeGreaterThan(0);
+    expect((await api.startupTasks()).calendar_offers_total).toBeGreaterThan(0);
+  });
+
   it("downloads one outline file, and lets the student exclude a candidate", async () => {
     const api = createMockApi(fast);
     const outline = (await api.courseCalendar(UNLABELLED)).candidates.find((c) => c.downloadable);

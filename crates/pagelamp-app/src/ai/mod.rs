@@ -7,6 +7,9 @@
 
 pub(crate) mod codex;
 mod estimate;
+mod explain;
+mod note;
+mod plan;
 pub mod prompts;
 mod providers;
 pub(crate) mod run;
@@ -15,7 +18,17 @@ mod types;
 mod usage;
 
 pub use codex::{CHATGPT_PLAN_OFFERED, DEFAULT_WEEKLY_CAP};
-pub(crate) use estimate::{calendar_budget, feature_choice, request_shape};
+pub(crate) use estimate::{
+    calendar_budget, feature_choice, request_shape, request_shape_with_note,
+};
+pub use explain::{
+    Citation, ExplainOptions, ExplanationParagraph, ExplanationSection, OutputLanguage,
+    WeeklyExplanation,
+};
+pub use note::{MAX_FOCUS_ITEMS, NoteFocus, WeeklyNote, WeeklyNoteOptions, WeeklyNoteSettings};
+pub use plan::{
+    GeneratedStudyPlan, PlanLimits, PlanWarning, PlanWarningCode, StudyPlanRequest, plan_limits,
+};
 pub(crate) use settings::backend_key;
 pub use types::*;
 
@@ -48,8 +61,10 @@ impl App {
         profile::presets().iter().map(provider_preset).collect()
     }
 
-    /// Ollama and LM Studio on this computer: which are running (a quick loopback call each).
+    /// Ollama and LM Studio on this computer: which are running (a quick loopback call each),
+    /// and which the student already added.
     pub async fn detect_local_servers(&self) -> Result<Vec<LocalServer>> {
+        let added = self.read_store()?.model_providers()?;
         let mut servers = Vec::new();
         for (preset_id, kind) in [
             ("ollama", LocalServerKind::Ollama),
@@ -74,10 +89,16 @@ impl App {
                 }
                 Err(_) => false,
             };
+            let provider_id = added
+                .iter()
+                .find(|row| row.preset == preset_id && same_address(&row.base_url, &base_url))
+                .map(|row| row.id.clone());
             servers.push(LocalServer {
                 kind,
+                preset: preset_id.to_string(),
                 base_url,
                 running,
+                provider_id,
             });
         }
         Ok(servers)
@@ -389,6 +410,19 @@ impl App {
         Ok(())
     }
 
+    /// Delete generated content (design §8): the runs of `course` (its explanations and
+    /// syllabus readings), or with `None` every run, study plan drafts included. Calendars keep
+    /// their dates and label, and an accepted plan stays with its label. How many were deleted;
+    /// `NotFound` for an unknown course.
+    pub fn delete_generated(&self, course: Option<&str>) -> Result<u32> {
+        let store = self.write_store()?;
+        let course_id = match course {
+            Some(course) => Some(store.resolve_course_with(course, true)?.id),
+            None => None,
+        };
+        Ok(store.delete_generations(course_id.as_deref())?)
+    }
+
     /// Keys, providers, generations, the usage ledger, AI settings and the pre-update backup
     /// (from schema 4 on it holds AI data too; the result says it was removed).
     pub fn remove_all_ai_data(&self) -> Result<RemoveAiDataReport> {
@@ -495,8 +529,11 @@ pub(crate) fn doctor_checks(
         let url = profile::preset(preset_id)?.base_url.clone()?;
         Some(LocalServer {
             kind,
+            preset: preset_id.to_string(),
             base_url: url.as_str().trim_end_matches('/').to_string(),
             running: accepts_connections(&url),
+            // Doctor output is shared in issues: no provider ids.
+            provider_id: None,
         })
     })
     .collect();
@@ -504,6 +541,16 @@ pub(crate) fn doctor_checks(
         providers,
         local_servers,
     }
+}
+
+/// Whether two addresses name the same server: a trailing `/`, and `localhost` for
+/// `127.0.0.1`, don't matter.
+fn same_address(a: &str, b: &str) -> bool {
+    let normal = |url: &str| {
+        url.trim_end_matches('/')
+            .replacen("//localhost", "//127.0.0.1", 1)
+    };
+    normal(a) == normal(b)
 }
 
 /// Whether something on this computer accepts connections at `url`'s port (loopback

@@ -17,14 +17,15 @@ use std::fmt::Write as _;
 use chrono::{Duration, NaiveDate};
 
 use super::{
-    Block, CitationTarget, ContextCourse, GatedContext, LeftOutMaterial, LeftOutReason,
-    ManifestEntry,
+    Block, CitationTarget, ContextCourse, ContextManifest, GatedContext, LeftOutMaterial,
+    LeftOutReason, ManifestEntry,
 };
 use crate::ai::{BlockReason, Destination};
 use crate::calendar::candidates::{
     CandidateLeftOut, CandidateSignals, candidates_in, extra_chunks, select_chunks,
 };
 use crate::dates::course_date;
+use crate::lifecycle::is_active;
 use crate::model::{AiMaterialsState, Chunk, Course, EventKind, MaterialKind, Module, TextStatus};
 use crate::store::Store;
 use crate::term::ResolvedTerm;
@@ -74,22 +75,34 @@ pub enum GateError {
     Store(#[from] crate::Error),
 }
 
+/// The days of deadlines a weekly note lists.
+const NOTE_DEADLINE_DAYS: u32 = 7;
+
 /// Which courses a study plan covers.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlanScope {
-    /// Course ids or codes; empty: every visible course.
+    /// Course ids or codes; empty: every visible, active course (lifecycle `is_active`,
+    /// calendar design §8.1).
     pub courses: Vec<String>,
     /// Days ahead the plan covers (deadlines in this window are listed).
     pub horizon_days: u32,
 }
 
 /// Structure only, for a study plan: the courses in scope with their week, this and next
-/// week's materials (titles and ids) and the deadlines in the horizon. Hidden courses are left
-/// out.
+/// week's materials (titles and ids) and the deadlines in the horizon. Hidden and removed
+/// courses are left out.
 pub fn plan_context(store: &Store, scope: &PlanScope, at: AsOf) -> Result<GatedContext, GateError> {
     store
         .in_read_transaction(|store| {
-            let courses = scoped_courses(store, &scope.courses)?;
+            let courses = if scope.courses.is_empty() {
+                views::list_courses(store, false, at)?
+                    .into_iter()
+                    .filter(|summary| is_active(&summary.lifecycle, at.today))
+                    .map(|summary| summary.course)
+                    .collect()
+            } else {
+                scoped_courses(store, &scope.courses)?
+            };
             let mut context = GatedContext::empty();
             for course in &courses {
                 let text = course_structure(store, course, at, scope.horizon_days, &mut context)?;
@@ -100,18 +113,65 @@ pub fn plan_context(store: &Store, scope: &PlanScope, at: AsOf) -> Result<GatedC
         .map_err(GateError::from)
 }
 
-/// Structure and study-plan progress, for the weekly note: every visible course, deadlines in
-/// the next 7 days, and last week's and today's plan items.
+/// Structure and study-plan progress, for the weekly note, chosen like the weekly digest:
+/// every visible, active course (lifecycle `is_active`) with its week, lifecycle and phase, its
+/// materials' titles and its deadlines in the next 7 days; every other visible course with
+/// deadlines in those 7 days, with those deadlines only (a course wrongly judged finished still
+/// counts); last week's plan progress and today's plan items. Hidden and removed courses are
+/// left out. A break appears as its kind, never its label. Empty (`is_empty`) when there is
+/// nothing to write about.
 pub fn note_context(store: &Store, at: AsOf) -> Result<GatedContext, GateError> {
     store
         .in_read_transaction(|store| {
-            let courses = scoped_courses(store, &[])?;
             let mut context = GatedContext::empty();
-            for course in &courses {
-                let text = course_structure(store, course, at, 7, &mut context)?;
+            for summary in views::list_courses(store, false, at)? {
+                if !is_active(&summary.lifecycle, at.today) {
+                    let deadlines = views::deadlines(
+                        store,
+                        Some(&summary.course.id),
+                        NOTE_DEADLINE_DAYS,
+                        0,
+                        true,
+                        at,
+                    )?;
+                    if deadlines.is_empty() {
+                        continue;
+                    }
+                    context.summary.courses.push(ContextCourse {
+                        course_id: summary.course.id.clone(),
+                        state: summary.course.ai_materials(),
+                        text_included: false,
+                    });
+                    let mut text = format!(
+                        "Course: {} [course_id: {}]\nLifecycle: {} (not active: its deadlines only)\n",
+                        summary.course.display_name(),
+                        summary.course.id,
+                        summary.lifecycle.state.as_str(),
+                    );
+                    list_deadlines(&mut text, &deadlines, NOTE_DEADLINE_DAYS);
+                    context.blocks.push(Block::Structure(text));
+                    continue;
+                }
+                let mut text =
+                    course_structure(store, &summary.course, at, NOTE_DEADLINE_DAYS, &mut context)?;
+                let timeline = &summary.timeline;
+                let _ = write!(
+                    text,
+                    "Lifecycle: {}\nPhase: {}",
+                    summary.lifecycle.state.as_str(),
+                    timeline.phase.as_str()
+                );
+                if let Some(kind) = timeline.current_break_kind {
+                    let _ = write!(text, " ({})", kind.as_str());
+                }
+                if let Some(week) = timeline.last_teaching_week {
+                    let _ = write!(text, " (after week {week})");
+                }
+                text.push('\n');
                 context.blocks.push(Block::Structure(text));
             }
-            if let Some(plan) = store.latest_study_plan()? {
+            // Hidden courses' items too: a hidden course is never sent.
+            if let Some(plan) = store.latest_visible_study_plan()? {
                 let week_ago = at.today - Duration::days(7);
                 let last_week: Vec<_> = plan
                     .plan
@@ -119,29 +179,31 @@ pub fn note_context(store: &Store, at: AsOf) -> Result<GatedContext, GateError> 
                     .iter()
                     .filter(|item| item.date >= week_ago && item.date < at.today)
                     .collect();
-                let done = last_week.iter().filter(|item| item.done).count();
-                let mut text = format!(
-                    "Study plan progress: last 7 days {done} of {} items done.\nToday:",
-                    last_week.len()
-                );
                 let today: Vec<_> = plan
                     .plan
                     .items
                     .iter()
                     .filter(|i| i.date == at.today)
                     .collect();
-                if today.is_empty() {
-                    text.push_str(" nothing planned.");
-                }
-                for item in today {
-                    let _ = write!(
-                        text,
-                        "\n- {}{}",
-                        item.title,
-                        if item.done { " (done)" } else { "" }
+                if !last_week.is_empty() || !today.is_empty() {
+                    let done = last_week.iter().filter(|item| item.done).count();
+                    let mut text = format!(
+                        "Study plan progress: last 7 days {done} of {} items done.\nToday:",
+                        last_week.len()
                     );
+                    if today.is_empty() {
+                        text.push_str(" nothing planned.");
+                    }
+                    for item in today {
+                        let _ = write!(
+                            text,
+                            "\n- {}{}",
+                            item.title,
+                            if item.done { " (done)" } else { "" }
+                        );
+                    }
+                    context.blocks.push(Block::Structure(text));
                 }
-                context.blocks.push(Block::Structure(text));
             }
             Ok(context)
         })
@@ -158,6 +220,20 @@ pub fn week_context(
     at: AsOf,
     destination: Destination,
     budget: ContextBudget,
+) -> Result<GatedContext, GateError> {
+    week_context_including(store, course, week, at, destination, budget, &[])
+}
+
+/// `week_context` with the materials in `include` sent although they look like assessments
+/// (the left-out list's "include"). Materials without text and external links stay out.
+pub fn week_context_including(
+    store: &Store,
+    course: &str,
+    week: Option<u32>,
+    at: AsOf,
+    destination: Destination,
+    budget: ContextBudget,
+    include: &[String],
 ) -> Result<GatedContext, GateError> {
     let result = store.in_read_transaction(|store| {
         let course = store.resolve_course_with(course, true)?;
@@ -178,12 +254,15 @@ pub fn week_context(
         let mut context = GatedContext::empty();
         let mut candidates = Vec::new();
         for view in &listed.materials {
-            if let Some(reason) = left_out(store, view)? {
-                context.summary.left_out.push(LeftOutMaterial {
-                    material_id: view.id.clone(),
-                    title: view.title.clone(),
-                    reason,
-                });
+            // "Include" lifts only an includable reason: `left_out` decides every other reason
+            // (no readable text first) before it.
+            let reason = left_out(store, view)?
+                .filter(|reason| !(reason.includable() && include.contains(&view.id)));
+            if let Some(reason) = reason {
+                context
+                    .summary
+                    .left_out
+                    .push(LeftOutMaterial::new(&view.id, &view.title, reason));
                 continue;
             }
             let chunks = store.get_chunks(&view.id, 0, None)?;
@@ -226,11 +305,11 @@ pub fn week_context(
                 });
             }
             if ords.is_empty() {
-                context.summary.left_out.push(LeftOutMaterial {
-                    material_id: view.id.clone(),
-                    title: view.title.clone(),
-                    reason: LeftOutReason::OverBudget,
-                });
+                context.summary.left_out.push(LeftOutMaterial::new(
+                    &view.id,
+                    &view.title,
+                    LeftOutReason::OverBudget,
+                ));
                 continue;
             }
             context.summary.materials_included += 1;
@@ -254,6 +333,32 @@ pub fn week_context(
         Ok(Ok(context))
     })?;
     result.map_err(GateError::Blocked)
+}
+
+/// Whether an explanation of a course week is out of date at `at` (design §5.2): a material it
+/// was written from changed (`content_hash`) or is gone, or the week now lists a material it
+/// didn't consider (`considered`: the ids it included or left out).
+pub fn week_changed(
+    store: &Store,
+    course_id: &str,
+    week: Option<u32>,
+    manifest: &ContextManifest,
+    considered: &[String],
+    at: AsOf,
+) -> crate::Result<bool> {
+    store.in_read_transaction(|store| {
+        for entry in &manifest.materials {
+            let now = store.get_material(&entry.material_id)?;
+            if now.is_none_or(|material| material.content_hash != entry.content_hash) {
+                return Ok(true);
+            }
+        }
+        let listed = views::week_materials(store, course_id, week, true, at)?;
+        Ok(listed
+            .materials
+            .iter()
+            .any(|material| !considered.contains(&material.id)))
+    })
 }
 
 impl GatedContext {
@@ -331,6 +436,11 @@ fn course_structure(
         }
     }
     let deadlines = views::deadlines(store, Some(&course.id), days, 0, true, at)?;
+    list_deadlines(&mut text, &deadlines, days);
+    Ok(text)
+}
+
+fn list_deadlines(text: &mut String, deadlines: &[views::Deadline], days: u32) {
     let _ = writeln!(text, "Deadlines in the next {days} days:");
     if deadlines.is_empty() {
         text.push_str("- none\n");
@@ -345,7 +455,6 @@ fn course_structure(
             deadline.event.kind.as_str()
         );
     }
-    Ok(text)
 }
 
 fn list_materials(
@@ -382,18 +491,21 @@ fn list_materials(
 }
 
 /// Why a week material is left out of an explanation, if it is.
+/// Why a week material stays out of an explanation, in this order: an external link, no
+/// readable text (not `ok`, or no chunks), then a title that looks like an assessment. Only the
+/// last one can be lifted ("include"), so an included material always has readable text.
 fn left_out(store: &Store, view: &MaterialView) -> crate::Result<Option<LeftOutReason>> {
     if view.kind == MaterialKind::ExternalLink {
         return Ok(Some(LeftOutReason::ExternalLink));
-    }
-    if looks_like_assessment(&view.title) {
-        return Ok(Some(LeftOutReason::LooksLikeAssessment));
     }
     let readable = store
         .get_material(&view.id)?
         .is_some_and(|m| m.text_status == TextStatus::Ok);
     if !readable || store.chunk_count(&view.id)? == 0 {
         return Ok(Some(LeftOutReason::NoText));
+    }
+    if looks_like_assessment(&view.title) {
+        return Ok(Some(LeftOutReason::LooksLikeAssessment));
     }
     Ok(None)
 }
@@ -470,11 +582,11 @@ pub fn calendar_context(
                 Some(CandidateLeftOut::OverBudget) => LeftOutReason::OverBudget,
                 Some(CandidateLeftOut::ExcludedByStudent) => continue,
             };
-            context.summary.left_out.push(LeftOutMaterial {
-                material_id: candidate.material_id.clone(),
-                title: candidate.title.clone(),
+            context.summary.left_out.push(LeftOutMaterial::new(
+                &candidate.material_id,
+                &candidate.title,
                 reason,
-            });
+            ));
         }
         if read.is_empty() {
             return Ok(Err(BlockReason::NoReadableMaterials));
@@ -519,11 +631,11 @@ pub fn calendar_context(
         for ((candidate, chunks), share) in read.iter().zip(&texts).zip(shares) {
             let selection = select_chunks(chunks, share);
             if selection.chosen.is_empty() {
-                context.summary.left_out.push(LeftOutMaterial {
-                    material_id: candidate.material_id.clone(),
-                    title: candidate.title.clone(),
-                    reason: LeftOutReason::OverBudget,
-                });
+                context.summary.left_out.push(LeftOutMaterial::new(
+                    &candidate.material_id,
+                    &candidate.title,
+                    LeftOutReason::OverBudget,
+                ));
                 continue;
             }
             let material = data

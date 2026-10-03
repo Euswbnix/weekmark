@@ -1,0 +1,49 @@
+{
+  "reminders": {
+    "remind": {
+      "question": "Get notifications about deadlines and your week? {{product}} schedules them a week ahead, so they arrive even when it's closed.",
+      "yes": "Yes, Remind Me",
+      "no": "Not Now",
+      "onDone": "{{product}} will remind you. You can change this in Settings ▸ Reminders.",
+      "offDone": "No reminders. You can turn them on in Settings ▸ Reminders.",
+      "saveFailed": "Your answer couldn't be saved."
+    },
+    "settings": {
+      "notify": "Remind me with notifications",
+      "notifyHint": "{{product}} schedules reminders a week ahead, so they arrive even when it's closed. Open it at least once a week to keep them coming.",
+      "notDetermined": "macOS asks whether {{product}} may send notifications when you turn this on.",
+      "denied": "Notifications from {{product}} are turned off in System Settings, so reminders show only inside {{product}}.",
+      "openNotificationSettings": "Open Notification Settings",
+      "digestDay": "Day of your week",
+      "digestTime": "Time of your week",
+      "planTime": "Time of today's plan"
+    },
+    "catchUp": {
+      "turnOn": "Get These as Notifications"
+    },
+    "general": {
+      "menuBar": "Show {{product}} in the menu bar",
+      "menuBarHint": "Your week at a glance. Closing the last window then leaves {{product}} running in the menu bar.",
+      "login": "Open {{product}} at login",
+      "loginApproval": "macOS needs your approval in System Settings ▸ General ▸ Login Items.",
+      "loginUnavailable": "This copy of {{product}} can't be added to the login items. Move it to the Applications folder and open it from there.",
+      "loginFailed": "{{product}} couldn't be added to or removed from the login items.",
+      "openLoginItems": "Open Login Items Settings"
+    }
+  },
+  "menuBar": {
+    "label": "{{product}}",
+    "labelDue_one": "{{product}} — {{count}} deadline in the next 24 hours",
+    "labelDue_other": "{{product}} — {{count}} deadlines in the next 24 hours",
+    "dueSoon": "Due soon",
+    "moreDue_one": "{{count}} more in the next 7 days",
+    "moreDue_other": "{{count}} more in the next 7 days",
+    "todayPlan": "Today's plan",
+    "moreToday_one": "{{count}} more today",
+    "moreToday_other": "{{count}} more today",
+    "lastWeek": "Last week: {{done}} of {{planned}} done",
+    "loadFailed": "This week couldn't be loaded.",
+    "settings": "Settings…",
+    "open": "Open {{product}}"
+  }
+}

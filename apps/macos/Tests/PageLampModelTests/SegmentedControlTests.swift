@@ -72,9 +72,26 @@ struct SegmentedLayoutTests {
         #expect(layout.thumbFrame(followingX: 400) == CGRect(x: 185, y: 2, width: 86, height: 20))
     }
 
+    @Test("Explain (M3) as a fourth segment keeps the slot: 364 × 24 in English, 324 × 24 in Chinese")
+    @MainActor
+    func fourSegments() {
+        let font = NSFont.systemFont(ofSize: SegmentedMetrics.fontSize)
+        func widths(_ labels: [String]) -> [CGFloat] {
+            labels.map { NSAttributedString(string: $0, attributes: [.font: font]).size().width }
+        }
+        let english = SegmentedLayout(labelWidths: widths(["This Week", "Deadlines", "Timeline", "Explain"]))
+        #expect(english.size.width == 364 && english.size.height == 24)
+        #expect(english.thumbFrame(3) == CGRect(x: 276, y: 2, width: 86, height: 20))
+        #expect(english.accessibilityFrame(3) == CGRect(x: 273, y: 0, width: 91, height: 24))
+        let chinese = SegmentedLayout(labelWidths: widths(["本周", "截止日期", "教学进度", "讲解"]))
+        #expect(chinese.size.width == 324 && chinese.size.height == 24)
+        #expect(chinese.thumbFrame(3) == CGRect(x: 246, y: 2, width: 76, height: 20))
+    }
+
     @Test("the width rule is AppKit's: NSSegmentedControl, .tabs, .fillEqually (macOS 27)", arguments: [
         ["This Week", "Deadlines", "Timeline"], ["本周", "截止日期", "教学进度"],
         ["截止日期", "本周", "本周"], ["This Week", "This Week", "Timeline"], ["Timeline", "Timeline", "This Week"],
+        ["This Week", "Deadlines", "Timeline", "Explain"], ["本周", "截止日期", "教学进度", "讲解"],
     ])
     @MainActor
     func matchesAppKit(labels: [String]) {

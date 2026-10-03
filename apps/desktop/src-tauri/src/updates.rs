@@ -263,9 +263,16 @@ pub async fn updates_check<R: Runtime>(
         .map_err(|err| app_error(&err))?
         .timeout(CHECK_TIMEOUT)
         // Windows: the installer takes over from here (Install is refused during syncs).
-        .on_before_exit(
-            || tracing::info!(target: "pagelamp::updates", "exiting for the installer"),
-        );
+        .on_before_exit({
+            let app = app.clone();
+            move || {
+                tracing::info!(target: "pagelamp::updates", "exiting for the installer");
+                // This replaces the plugin's own hook (which tears the whole app down here):
+                // only the tray icon goes, on the main thread, so no dead icon stays behind. If
+                // the installer can't start, PageLamp goes on as it was.
+                crate::background::remove_tray_before_exit(&app);
+            }
+        });
     if mode == InstallMode::DownloadOnly {
         builder = builder.target(DOWNLOAD_ONLY_TARGET);
     }
@@ -361,6 +368,8 @@ pub async fn updates_install<R: Runtime>(
     );
     let install = |bytes: &[u8]| {
         let _ = installing.send(UpdateEvent::Installing);
+        // The updated app shows its window, even if this launch came from the login item.
+        crate::background::show_window_at_next_launch(&app);
         update.install(bytes)
     };
     let result = fetch_and_install(
@@ -378,12 +387,185 @@ pub async fn updates_install<R: Runtime>(
         Err(Failure::Refused(err)) => return Err(err),
         Err(Failure::Updater(err)) => {
             tracing::warn!(target: "pagelamp::updates", code = error_code(&err), "update install failed: {err}");
+            // Windows: the installer didn't take over; the tray it took down comes back.
+            crate::background::restore_tray(&app);
             return Err(app_error(&err));
         }
     };
     tracing::info!(target: "pagelamp::updates", version = %update.version, "update installed; restarting");
     let _ = on_event.send(UpdateEvent::Restarting);
+    restart(&app)
+}
+
+/// Set when the app is to come back after it exits (see `restart`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+static RELAUNCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Restarts PageLamp (an installed update, the debug restart). Called off the main thread (an
+/// async command), so the plugins see Exit before the new process starts: the single-instance
+/// lock is released first and the app comes back exactly once.
+///
+/// A PageLamp its login item started belongs to that job: on macOS launchd kills the job's
+/// process group when it exits, and under systemd 246–249 (the xdg-autostart generator's
+/// service) the whole cgroup goes. A new process started the usual way (`AppHandle::restart`)
+/// would go with it. So the app exits first and `relaunch_if_asked` starts the new one out of
+/// the job. Windows: the installer restarts PageLamp itself.
+pub fn restart<R: Runtime>(app: &AppHandle<R>) -> ! {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        RELAUNCH.store(true, std::sync::atomic::Ordering::SeqCst);
+        if std::thread::current().name() == Some("main") {
+            // No Exit event would come while this thread waits, so the plugins wouldn't see
+            // one: release the single-instance lock here, or the new process could hand over
+            // to this one as it goes and quit.
+            tauri_plugin_single_instance::destroy(app);
+            app.cleanup_before_exit();
+            relaunch_if_asked(app);
+            std::process::exit(0);
+        }
+        app.exit(0);
+        loop {
+            std::thread::sleep(Duration::MAX);
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     app.restart()
+}
+
+/// At `RunEvent::Exit`, after the plugins saw it: starts the new PageLamp if `restart` asked,
+/// with the same arguments.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn relaunch_if_asked<R: Runtime>(app: &AppHandle<R>) {
+    if !RELAUNCH.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let binary = match tauri::process::current_binary(&app.env()) {
+        Ok(binary) => binary,
+        Err(error) => {
+            tracing::warn!(target: "pagelamp::updates", %error, "restart: no binary path");
+            return;
+        }
+    };
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let started = relaunch(&binary, &args);
+    match started {
+        Ok(pid) => tracing::info!(target: "pagelamp::updates", pid, "restarted"),
+        Err(error) => tracing::warn!(target: "pagelamp::updates", %error, "restart failed"),
+    }
+}
+
+/// macOS: the new process gets a process group of its own. The updater replaced the bundle in
+/// place and its executable may have a new name, so it's read from Info.plist, as Tauri's
+/// restart does; `open -n` (Launch Services) is the last resort, only for a `.app` bundle and
+/// in its own group too.
+#[cfg(target_os = "macos")]
+fn relaunch(binary: &std::path::Path, args: &[std::ffi::OsString]) -> std::io::Result<u32> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Command;
+    // <bundle>/Contents/MacOS/<executable>, when running from a bundle.
+    let contents = binary
+        .parent()
+        .filter(|dir| dir.ends_with("MacOS"))
+        .and_then(std::path::Path::parent)
+        .filter(|dir| dir.ends_with("Contents"));
+    let executable = contents
+        .and_then(|contents| {
+            let info = plist::Value::from_file(contents.join("Info.plist")).ok()?;
+            let name = info
+                .as_dictionary()?
+                .get("CFBundleExecutable")?
+                .as_string()?;
+            Some(contents.join("MacOS").join(name))
+        })
+        .unwrap_or_else(|| binary.to_path_buf());
+    let spawned = Command::new(&executable)
+        .args(args)
+        .process_group(0)
+        .spawn()
+        .map(|child| child.id());
+    let bundle = contents
+        .and_then(std::path::Path::parent)
+        .filter(|bundle| bundle.extension() == Some(std::ffi::OsStr::new("app")));
+    match (spawned, bundle) {
+        (Err(error), Some(bundle)) => {
+            tracing::warn!(target: "pagelamp::updates", %error, "restart: opening the bundle instead");
+            Command::new("/usr/bin/open")
+                .arg("-n")
+                .arg(bundle)
+                .arg("--args")
+                .args(args)
+                .process_group(0)
+                .spawn()
+                .map(|child| child.id())
+        }
+        (result, _) => result,
+    }
+}
+
+/// Linux: started by a systemd service (the xdg-autostart generator's `app-…@autostart.service`),
+/// the new process gets a scope of its own through `systemd-run`, since systemd 246–249 stops the
+/// service's whole cgroup when this process exits, whatever the new one's process group. This
+/// process waits (up to 3 s) until it has left the cgroup. Elsewhere, or if `systemd-run` fails,
+/// it starts the usual way (the AppImage, as Tauri's restart does).
+#[cfg(target_os = "linux")]
+fn relaunch(binary: &std::path::Path, args: &[std::ffi::OsString]) -> std::io::Result<u32> {
+    use std::process::Command;
+    let own = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+    if cgroup_leaf(&own).is_some_and(|leaf| leaf.ends_with(".service")) {
+        match Command::new("systemd-run")
+            .args([
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "--slice=app.slice",
+                "--",
+            ])
+            .arg(binary)
+            .args(args)
+            .spawn()
+        {
+            Ok(mut child) => {
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                loop {
+                    let theirs = std::fs::read_to_string(format!("/proc/{}/cgroup", child.id()))
+                        .unwrap_or_default();
+                    if !theirs.is_empty() && theirs != own {
+                        return Ok(child.id());
+                    }
+                    if let Ok(Some(status)) = child.try_wait() {
+                        tracing::warn!(target: "pagelamp::updates", %status, "restart: systemd-run ended");
+                        break;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Ok(child.id());
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+            Err(error) => {
+                tracing::warn!(target: "pagelamp::updates", %error, "restart: no systemd-run")
+            }
+        }
+    }
+    Command::new(binary)
+        .args(args)
+        .spawn()
+        .map(|child| child.id())
+}
+
+/// The last segment of a process's systemd cgroup (`/proc/<pid>/cgroup`): the cgroup v2 line
+/// (`0::/…`), else the v1 `name=systemd` hierarchy.
+#[cfg(any(target_os = "linux", test))]
+fn cgroup_leaf(text: &str) -> Option<&str> {
+    let path = text
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .or_else(|| {
+            text.lines()
+                .find_map(|line| line.split_once(":name=systemd:").map(|(_, path)| path))
+        })?;
+    path.rsplit('/').next().filter(|leaf| !leaf.is_empty())
 }
 
 /// Why `fetch_and_install` stopped.
@@ -507,6 +689,21 @@ mod tests {
     use semver::Version;
 
     use super::{current_version, is_newer};
+
+    #[test]
+    fn reads_the_systemd_cgroup_leaf() {
+        use super::cgroup_leaf;
+        // cgroup v2, the xdg-autostart generator's unit (systemd 248+).
+        let v2 = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-PageLamp@autostart.service\n";
+        assert_eq!(cgroup_leaf(v2), Some("app-PageLamp@autostart.service"));
+        // A scope (GNOME, KIO before systemd 250): not a service.
+        let scope = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-gnome-PageLamp-4242.scope";
+        assert_eq!(cgroup_leaf(scope), Some("app-gnome-PageLamp-4242.scope"));
+        // cgroup v1: the name=systemd hierarchy.
+        let v1 = "12:pids:/user.slice\n1:name=systemd:/user.slice/user-1000.slice/user@1000.service/app-PageLamp-autostart.service\n";
+        assert_eq!(cgroup_leaf(v1), Some("app-PageLamp-autostart.service"));
+        assert_eq!(cgroup_leaf(""), None);
+    }
 
     fn v(s: &str) -> Version {
         Version::parse(s).expect("test version")

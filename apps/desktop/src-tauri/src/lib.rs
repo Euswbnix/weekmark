@@ -12,11 +12,15 @@
 //! ─────────────────────────────────────────────────────────────────────────────────────────────
 
 pub mod backend;
+pub mod background;
 mod commands;
+pub mod reminders;
 pub mod updates;
 pub mod window;
 
 pub use backend::Backend;
+
+use tauri::Manager;
 
 /// Every command the UI can call (see `src/api/tauri.ts`). Kept apart from `run` so the IPC
 /// contract test (`tests/ipc_contract.rs`) builds the app with exactly the same handlers.
@@ -40,6 +44,7 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         commands::list_deadlines,
         commands::search,
         commands::latest_study_plan,
+        commands::plan_limits,
         commands::set_course_policy,
         commands::set_course_term,
         commands::set_course_ai_access,
@@ -52,6 +57,7 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         commands::lifecycle_summary,
         commands::snooze_lifecycle_banner,
         commands::snooze_removal_suggestions,
+        commands::snooze_calendar_offers,
         commands::clear_removal_snooze,
         commands::removal_preview,
         commands::remove_courses,
@@ -70,6 +76,19 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         commands::read_course_calendar,
         commands::read_course_calendars,
         commands::cancel_generation,
+        commands::explain_week,
+        commands::saved_explanations,
+        commands::delete_explanation,
+        commands::ai_output_language,
+        commands::set_ai_output_language,
+        commands::generate_study_plan,
+        commands::accept_study_plan,
+        commands::set_study_plan_item_done,
+        commands::write_weekly_note,
+        commands::weekly_notes,
+        commands::delete_weekly_note,
+        commands::weekly_note_settings,
+        commands::set_prepare_weekly_note_on_monday,
         commands::mcp_client_configs,
         commands::diagnostic_report,
         commands::doctor,
@@ -111,6 +130,15 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         commands::codex_logout,
         commands::set_mode_a_weekly_cap,
         commands::set_codex_source,
+        background::background_status,
+        background::set_tray_labels,
+        reminders::reminder_settings,
+        reminders::set_reminder_settings,
+        reminders::due_reminders,
+        reminders::show_reminders,
+        reminders::mark_reminders_shown,
+        reminders::show_reminders_on_notice,
+        reminders::open_notification_settings,
         updates::updates_status,
         updates::updates_check,
         updates::updates_install,
@@ -122,23 +150,63 @@ pub fn run() {
     // the core below is logged and a crash is recorded for the next launch's notice.
     pagelamp_app::diagnostics::init(pagelamp_app::diagnostics::ProcessKind::App, false);
     updates::remove_old_sidecar();
-    let builder = tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let identifier = context.config().identifier.clone();
+    let hidden = background::launch_hidden(std::env::args(), &identifier);
+    let mut builder = tauri::Builder::default();
+    // First: a second launch hands over to the running PageLamp before anything else starts.
+    if let Some(single_instance) = background::single_instance_plugin() {
+        builder = builder.plugin(single_instance);
+    }
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(updates::plugin())
+        .plugin(background::autostart_plugin(&identifier))
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             updates::manage(app.handle());
             // Built here, not from the config, so Windows 11 can get Mica (window.rs).
             window::create_main(app)?;
+            // The stored "Remind me" answer; unknown while the core can't open.
+            let run_in_background = app
+                .state::<Backend>()
+                .app()
+                .and_then(|facade| facade.reminder_settings())
+                .map(|settings| settings.run_in_background)
+                .ok();
+            background::start(app.handle(), run_in_background);
+            reminders::start(app.handle().clone());
+            #[cfg(debug_assertions)]
+            background::debug_restart_once(app.handle());
             Ok(())
         })
-        .manage(Backend::open());
-    with_commands(builder)
-        .run(tauri::generate_context!())
-        .unwrap_or_else(|err| {
-            panic!(
-                "error while running the {} desktop app: {err}",
-                pagelamp_core::brand::PRODUCT_NAME
-            )
-        });
+        .manage(Backend::open())
+        .manage(background::Background::new(hidden));
+    let app = with_commands(builder).build(context).unwrap_or_else(|err| {
+        panic!(
+            "error while running the {} desktop app: {err}",
+            pagelamp_core::brand::PRODUCT_NAME
+        )
+    });
+    app.run(|_app, _event| {
+        // The plugins have seen Exit (the single-instance lock is gone): an update's restart.
+        #[cfg(target_os = "linux")]
+        if let tauri::RunEvent::Exit = _event {
+            updates::relaunch_if_asked(_app);
+        }
+        #[cfg(target_os = "macos")]
+        match _event {
+            // macOS doesn't start a second PageLamp when it's opened again (Finder, the Dock,
+            // Spotlight, a login item): the running one gets Reopen. Show its window, as the
+            // single-instance hand-over does elsewhere; a window in the tray would stay hidden.
+            tauri::RunEvent::Reopen { .. } => {
+                tracing::info!(target: "pagelamp::background", "reopened: showing the window");
+                background::show_main(_app);
+            }
+            // The plugins have seen Exit (the single-instance lock is gone): an update's restart.
+            tauri::RunEvent::Exit => updates::relaunch_if_asked(_app),
+            _ => {}
+        }
+    });
 }

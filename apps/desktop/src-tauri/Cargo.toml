@@ -20,13 +20,30 @@ pagelamp-core.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "2.11", features = [] }
+tauri = { version = "2.11", features = ["tray-icon"] }
+# Reminders (v0.3 M3): opt-in start at login and desktop notifications. Pinned with `~`: the
+# next minors need tauri 2.12 (autostart 2.6, notification 2.5).
+tauri-plugin-autostart = "~2.5"
 tauri-plugin-dialog = "2.7"
+tauri-plugin-notification = "~2.4"
+# One PageLamp at a time: a login launch plus a click on the app icon would run two reminder
+# timers. ~2.4: 2.5 needs tauri 2.12.
+tauri-plugin-single-instance = "~2.4"
 tauri-plugin-opener = "2.5"
 # In-app updates (M0.4): Rust only, the webview gets no updater permission.
 tauri-plugin-updater = "~2.12"
 semver = "1"
 tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Probes for an AppIndicator library before building the tray (background.rs); already in the
+# tree through the tray's libappindicator-sys.
+libloading = "0.7"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The restart after an update reads the new bundle's executable name, as Tauri's own restart
+# does (updates.rs); already in the tree through Tauri.
+plist = "1"
 
 [target.'cfg(windows)'.dependencies]
 # The build number gates Mica (window.rs); already in the tree through Tauri.

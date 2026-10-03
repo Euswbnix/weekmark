@@ -67,7 +67,8 @@ struct ThisWeekTextTests {
                     StudyPlanItem(date: "2026-09-25", courseId: nil, title: $0, description: nil, materialIds: [], minutes: nil, done: false)
                 },
                 notes: nil
-            )
+            ),
+            origin: .aiApp
         )
         let digest = ThisWeekDigest(deadlines: deadlines, plan: plan, now: TestClock.now, calendar: TestClock.calendar)
         #expect(en.summary(digest) == "3 deadlines in the next 7 days · 2 plan tasks today")
@@ -130,7 +131,8 @@ struct ThisWeekTextTests {
     func plan() {
         let stored = StoredStudyPlan(
             id: 1, createdAt: TestClock.at(-2, 10),
-            plan: StudyPlan(horizonStart: "2026-09-24", horizonEnd: "2026-10-07", items: [], notes: nil)
+            plan: StudyPlan(horizonStart: "2026-09-24", horizonEnd: "2026-10-07", items: [], notes: nil),
+            origin: .aiApp
         )
         #expect(en.planMeta(stored) == "Made by your AI app 2 days ago · covers Sep 24 – Oct 7")
         #expect(zh.planMeta(stored) == "2天前由你的 AI 应用生成 · 覆盖 9月24日 至 10月7日")
@@ -139,12 +141,14 @@ struct ThisWeekTextTests {
         // Calendar days: made Wednesday 20:15, read Friday 10:00 → "2 days ago".
         let wednesdayEvening = StoredStudyPlan(
             id: 2, createdAt: TestClock.at(-2, 20, 15),
-            plan: StudyPlan(horizonStart: "2026-09-24", horizonEnd: "2026-10-07", items: [], notes: nil)
+            plan: StudyPlan(horizonStart: "2026-09-24", horizonEnd: "2026-10-07", items: [], notes: nil),
+            origin: .aiApp
         )
         #expect(en.planMeta(wednesdayEvening).hasPrefix("Made by your AI app 2 days ago"))
         let thisMorning = StoredStudyPlan(
             id: 3, createdAt: TestClock.at(0, 7),
-            plan: StudyPlan(horizonStart: "2026-09-24", horizonEnd: "2026-10-07", items: [], notes: nil)
+            plan: StudyPlan(horizonStart: "2026-09-24", horizonEnd: "2026-10-07", items: [], notes: nil),
+            origin: .aiApp
         )
         #expect(en.planMeta(thisMorning).hasPrefix("Made by your AI app 3 hours ago"))
 

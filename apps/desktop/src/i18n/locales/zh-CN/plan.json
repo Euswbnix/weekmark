@@ -1,0 +1,76 @@
+{
+  "title": "规划学习",
+  "description": "{{product}} 会根据你的课程请模型列出任务，再安排到你的学习日。在你选择使用这份计划之前，什么都不会保存。",
+  "entry": "用 {{product}} 规划…",
+  "form": {
+    "horizon": "规划天数",
+    "horizonHint": "从今天开始，1 到 56 天。",
+    "hours": "每周学习时长（小时）",
+    "hoursHint": "1 到 80 小时；每天最多 4 小时。",
+    "daysOff": "休息日",
+    "daysOffHint": "这些日子不安排学习。",
+    "courses": "课程",
+    "coursesHint": "模型只会读取你的 AI 设置允许的资料内容；其他课程只按课程结构来规划。",
+    "noCourses": "请至少选择一门课程。",
+    "nothingToPlan": "现在没有进行中的课程（没有正在上课、也没有 14 天内开始的课程），所以没有可以规划的内容。",
+    "seeCourses": "查看你的课程",
+    "note": "有想重点准备的吗？（可选）",
+    "noteHint": "例如「周五的期中考试」。它会和你的课程一起发送给模型。",
+    "generate": "生成我的计划",
+    "invalidHorizon": "请规划 1 到 56 天。",
+    "invalidHours": "请填写 1 到 80 小时。",
+    "noStudyDays": "请至少留一天用来学习。"
+  },
+  "running": {
+    "starting": "正在开始…",
+    "withModel": "正在用 {{backend}} · {{model}} 生成",
+    "stage": {
+      "building_context": "正在整理你的课程",
+      "waiting_for_model": "正在等待模型",
+      "validating": "正在检查结果",
+      "repairing": "正在修正结果格式",
+      "scheduling": "正在把任务安排到学习日"
+    },
+    "stop": "停止",
+    "stopping": "正在停止…",
+    "writingNow": "正在生成你的计划",
+    "leaveHint": "离开此页面会停止生成，不会保存任何内容。"
+  },
+  "draft": {
+    "title": "计划草稿",
+    "summary_one": "{{count}} 项任务，{{start}} 至 {{end}}",
+    "summary_other": "{{count}} 项任务，{{start}} 至 {{end}}",
+    "day": "日期",
+    "course": "课程",
+    "task": "任务",
+    "time": "时长",
+    "minutes_one": "{{count}} 分钟",
+    "minutes_other": "{{count}} 分钟",
+    "noItems": "模型没有为这段时间提出任务。",
+    "accept": "使用这份计划",
+    "regenerate": "重新生成",
+    "discard": "丢弃",
+    "ready": "计划草稿已生成。",
+    "accepted": "已保存为你的学习计划。",
+    "stopped": "已停止，没有保存任何内容。",
+    "discarded": "草稿已丢弃。",
+    "failed": "没能生成计划。",
+    "acceptFailed": "没能保存计划。"
+  },
+  "unscheduled": {
+    "title": "未排入计划",
+    "reason": {
+      "outside_horizon": "在计划最后一天之后",
+      "no_study_days": "没有剩余的学习日",
+      "no_time_before_latest": "截止前没有剩余时间",
+      "too_many_items": "任务太多"
+    }
+  },
+  "warnings": {
+    "graded_work_left_out_one": "有 {{count}} 项任务看起来像是在替你完成计分作业，已被去掉。",
+    "graded_work_left_out_other": "有 {{count}} 项任务看起来像是在替你完成计分作业，已被去掉。",
+    "unknown_materials_dropped_one": "模型提到的 {{count}} 份资料不在你的课程里，已去掉。",
+    "unknown_materials_dropped_other": "模型提到的 {{count}} 份资料不在你的课程里，已去掉。"
+  },
+  "structureOnly": "只按课程结构规划（没有发送资料内容）：{{courses}}。"
+}

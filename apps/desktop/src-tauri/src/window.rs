@@ -13,6 +13,8 @@
 use tauri::webview::PageLoadEvent;
 use tauri::{App, Manager, Runtime, WebviewWindowBuilder};
 
+use crate::background::{self, Background};
+
 /// What the page is told the window was built with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backdrop {
@@ -51,21 +53,31 @@ pub fn create_main<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     let (builder, backdrop, os_build) = with_backdrop(builder);
     builder
         .initialization_script(init_script(backdrop))
-        // Also after a failed load (Finished comes anyway), so the window never stays hidden.
+        // Also after a failed load (Finished comes anyway), so the window never stays hidden;
+        // except after a login launch (`--hidden`), until the student opens it from the tray.
         .on_page_load(|window, payload| {
             if payload.event() == PageLoadEvent::Finished
+                && window.state::<Background>().may_show()
                 && let Err(error) = window.show()
             {
                 tracing::warn!(target: "pagelamp::window", %error, "show main window");
             }
         })
         .build()?;
+    if let Some(window) = app.get_webview_window("main") {
+        background::watch_close(&window);
+    }
     // The Windows build tells a tester's "no Mica" apart: gated (Windows 10, 21H2) or DWM's own
     // solid fallback (Battery Saver, transparency off, an inactive window).
+    // `hidden`: a login launch (`--hidden`) waiting in the tray.
+    let hidden = app
+        .try_state::<Background>()
+        .is_some_and(|state| !state.may_show());
     tracing::info!(
         target: "pagelamp::window",
         backdrop = backdrop.name(),
         os_build = ?os_build,
+        hidden,
         "main window"
     );
     Ok(())

@@ -20,8 +20,11 @@ struct ThisWeekSnapshotStateTests {
         let names = SnapshotCatalog.pages.map(\.name).filter { $0.hasPrefix("this-week-") }
         #expect(names == [
             "default", "crashed", "next-up", "next-up-morning", "quiet", "errors", "stale-plan",
-            "no-sources", "no-courses", "first-sync", "narrow",
+            "no-sources", "no-courses", "first-sync", "narrow", "reminders-catchup",
         ].map { "this-week-\($0)" })
+
+        // The catch-up card sits on the reading page (the card itself comes from its `make`).
+        #expect(try await model("reminders-catchup").thisWeekPageState == .page)
 
         let preview = try await model("default")
         #expect(preview.thisWeekPageState == .page)

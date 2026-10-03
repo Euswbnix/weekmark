@@ -1,0 +1,7 @@
+{
+  "weeklyNote": {
+    "write": "Write My Weekly Note",
+    "writeAgain": "Write a New Note",
+    "showFrom": "Show the note from {{when}}"
+  }
+}

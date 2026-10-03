@@ -1,5 +1,5 @@
 // Course detail (spec §3.2, M1 read-only): the header band in the lamp (lit for the current
-// week), the source problem (S7), then This Week / Deadlines / Timeline; the read-only
+// week), the source problem (S7), then This Week / Deadlines / Timeline (and Explain, M3); the read-only
 // inspector column; the toolbar's ‹ › and This Week (Chrome/Toolbars.swift); the accessory bar.
 // Editing, the week scrubber, downloads and the term strip are M2.
 
@@ -92,10 +92,12 @@ package struct CourseDetailPage: View {
 
     package var body: some View {
         let ui = model.ui(for: summary.course.id)
+        // Explain shows only where it's on (else This Week, like the Tauri app's unknown tab).
+        let section = ui.section.shown(explain: model.aiExplain)
         // The freshest timeline: the displayed week's, else the course list's.
         let timeline = detail.week.value?.timeline ?? summary.timeline
         let weekLine = CourseWeekLine(
-            section: ui.section,
+            section: section,
             selectedWeek: ui.selectedWeek,
             currentWeek: timeline.currentWeek,
             outsideTerm: timeline.outsideTerm
@@ -111,21 +113,49 @@ package struct CourseDetailPage: View {
                     CourseSourceAlert(source: source, problem: problem)
                 }
                 Group {
-                    switch ui.section {
+                    switch section {
                     case .week:
                         CourseWeekSection(summary: summary, detail: detail)
                     case .deadlines:
                         CourseDeadlinesSection(detail: detail)
                     case .timeline:
                         CourseTimelineSection(timeline: timeline, detail: detail)
+                    case .explain:
+                        CourseExplainSection(summary: summary, detail: detail, timeline: timeline)
                     }
                 }
                 .transition(.opacity)
-                .id(ui.section)
+                .id(section)
             }
-            .animation(reduceMotion ? PLMotion.reduced : PLMotion.section, value: ui.section)
+            .animation(reduceMotion ? PLMotion.reduced : PLMotion.section, value: section)
         }
         .primaryActionCandidates(CourseDetailModel.primaryActionCandidates(source: source, timeline: timeline))
+        // Explain's run belongs to the course, not to its section: it goes on while another
+        // section shows, and stops when the student leaves the course (another course, another
+        // page, the window closing).
+        .onDisappear { detail.leaveExplain() }
+        // Explain's model, made when the section shows (also on coming back to the course, whose
+        // model left with it) and again for a new service.
+        .onChange(of: section, initial: true) { _, section in
+            makeExplain(section)
+        }
+        .onChange(of: model.serviceGeneration) {
+            makeExplain(section)
+        }
+        // A course hidden, AI turned off or materials no longer shareable (from another app)
+        // stops a run it no longer allows; so does a refused course once a run says it goes to
+        // the cloud.
+        .onChange(of: summary) { _, summary in
+            Task { await detail.explain?.stopIfRefused(summary) }
+        }
+        .onChange(of: detail.explain?.runOnDevice) {
+            Task { await detail.explain?.stopIfRefused(summary) }
+        }
+    }
+
+    private func makeExplain(_ section: CourseSection) {
+        guard section == .explain else { return }
+        _ = detail.explainModel(using: model)
     }
 }
 

@@ -2,15 +2,28 @@ import { CircleAlert, CircleCheck, CircleMinus, FileSearch } from "lucide-react"
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
+import { toast } from "sonner";
 import type { EstimateRequest } from "@/api/ai";
 import { useCostEstimate } from "@/api/ai-queries";
-import { useAcceptPassingProposals, useSyllabusReadingOffers } from "@/api/proposalQueries";
+import {
+  useAcceptPassingProposals,
+  useSnoozeCalendarOffers,
+  useSyllabusReadingOffers,
+} from "@/api/proposalQueries";
 import { useCourses } from "@/api/queries";
 import type { CalendarRunOutcome, CourseSummary } from "@/api/types";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { GenerateButton } from "@/features/ai/GenerateButton";
 import { useAiErrorText } from "@/features/ai/useAiErrorText";
+import { focusPageHeading } from "@/lib/focus";
 import { paths } from "@/lib/routes";
 import { useApiErrorText } from "@/lib/useApiErrorText";
 import { translateWithText } from "../timeline/evidence";
@@ -22,12 +35,15 @@ import { type BatchState, useCalendarBatch } from "./useCalendarBatch";
  * offers (Current, Upcoming or Unknown, without an accepted calendar), the total "≈ $x" first,
  * then one course after another with Stop, and each course's outcome with a link to check it.
  * Proposals that passed every check can be accepted together; the rest wait on their course.
+ * "Not now" hides the offers for 14 days, like the lifecycle banner.
  */
 export function ReadSyllabiBatch() {
   const { t } = useTranslation("proposals");
   const offers = useSyllabusReadingOffers();
   const courses = useCourses();
   const batch = useCalendarBatch();
+  const snooze = useSnoozeCalendarOffers();
+  const errorText = useApiErrorText();
   const headingId = useId();
   const { state } = batch;
 
@@ -40,6 +56,18 @@ export function ReadSyllabiBatch() {
   if (state.phase === "idle" && estimate.data?.would_block === "no_model_chosen") return null;
   const byId = new Map((courses.data ?? []).map((c) => [c.course.id, c]));
 
+  async function notNow() {
+    if (snooze.isPending) return;
+    try {
+      await snooze.mutateAsync();
+      toast.success(t("batch.snoozed"));
+      // The card (and the focused button) goes away; continue from the page heading.
+      focusPageHeading();
+    } catch (error) {
+      toast.error(errorText(error));
+    }
+  }
+
   return (
     <Card aria-labelledby={headingId} role="region">
       <CardHeader>
@@ -49,6 +77,22 @@ export function ReadSyllabiBatch() {
         </CardTitle>
         {state.phase === "idle" ? (
           <CardDescription>{t("batch.description", { count: ids.length })}</CardDescription>
+        ) : null}
+        {state.phase === "idle" ? (
+          <CardAction>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              // Starts with the visible text; tells it apart from the lifecycle banner's "Not now".
+              aria-label={t("batch.notNowLabel")}
+              aria-disabled={snooze.isPending || undefined}
+              className="aria-disabled:opacity-50"
+              onClick={() => void notNow()}
+            >
+              {t("batch.notNow")}
+            </Button>
+          </CardAction>
         ) : null}
       </CardHeader>
       <CardContent className="space-y-4">

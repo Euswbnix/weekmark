@@ -13,6 +13,7 @@ use std::sync::Arc;
 use pagelamp_app::App;
 use pagelamp_app::trash::FileTrash;
 use pagelamp_core::secrets::MemorySecrets;
+use pagelamp_desktop_lib::background::Background;
 use pagelamp_desktop_lib::{Backend, with_commands};
 use serde_json::Value;
 use tauri::ipc::{CallbackFn, InvokeBody};
@@ -41,6 +42,15 @@ const SKIPPED: &[&str] = &[
     "install_codex",
     "codex_login",
     "codex_logout",
+    // Turns the login item and the tray on or off: this computer's real ones, never from a test.
+    // (background_status and set_tray_labels are replayed: with no autostart plugin and no tray
+    // here, they only read and store.)
+    "set_reminder_settings",
+    // Real notifications on this computer.
+    "show_reminders",
+    "show_reminders_on_notice",
+    // This computer's system settings.
+    "open_notification_settings",
 ];
 
 /// The removal commands' Trash here: moves nothing, so a changed fixture can never reach this
@@ -64,6 +74,7 @@ fn every_ui_call_reaches_its_command() {
     facade.set_trash(Arc::new(NoTrash));
     let app = with_commands(mock_builder())
         .manage(Backend::from_app(facade))
+        .manage(Background::new(false))
         .build(mock_context(noop_assets()))
         .expect("build mock app");
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())

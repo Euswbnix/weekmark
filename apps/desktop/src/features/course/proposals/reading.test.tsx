@@ -189,6 +189,25 @@ describe("Read syllabi for N courses", () => {
     expect(await within(region).findByText(/^Dates accepted for \d+ course/)).toBeInTheDocument();
   });
 
+  it("goes away for two weeks with Not now, and focus moves to the heading", async () => {
+    const api = mockApi();
+    const snooze = vi.spyOn(api, "snoozeCalendarOffers");
+    const { user } = renderRoute("/courses", { api });
+    const region = await screen.findByRole("region", { name: "Read syllabi with AI" });
+    await user.click(
+      within(region).getByRole("button", { name: "Not now: reading syllabi with AI" }),
+    );
+    expect(await screen.findByText("We'll offer it again in two weeks.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Read syllabi with AI" })).toBeNull(),
+    );
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    expect(snooze).toHaveBeenCalledTimes(1);
+    // The facade offers none of them now, on the card and at startup alike.
+    expect(await api.syllabusReadingOffers()).toEqual([]);
+    expect((await api.startupTasks()).calendar_offers_total).toBe(0);
+  });
+
   it("stops the rest when asked", async () => {
     const api = mockApi();
     const offers = await api.syllabusReadingOffers();

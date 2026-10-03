@@ -643,6 +643,7 @@ fn past_courses_end_with_evidence() {
         assert_eq!(lifecycle.last_activity, Some(date("2025-12-03")));
         assert!(lifecycle_codes(&lifecycle).contains(&"quiet_since"));
         assert!(!is_active(&lifecycle, date("2026-09-28")));
+        assert!(!lifecycle.is_active);
 
         let mut concluded = case;
         concluded.data.lms.concluded = Some(true);
@@ -712,6 +713,7 @@ fn recent_activity_keeps_finishing() {
     assert!(!lifecycle.suggest_removal);
     assert!(lifecycle_codes(&lifecycle).contains(&"recent_activity"));
     assert!(is_active(&lifecycle, date("2026-02-20")));
+    assert!(lifecycle.is_active);
     // Quiet for three weeks: Ended.
     assert_eq!(case.lifecycle("2026-03-05").state, LifecycleState::Ended);
 }
@@ -798,6 +800,10 @@ fn keep_current_upcoming_and_inactive() {
     assert_eq!(lifecycle.starts_on, Some(date("2027-01-01")));
     assert!(!is_active(&lifecycle, date("2026-09-28")));
     assert!(is_active(&lifecycle, date("2026-12-20")));
+    // The field is `is_active` on the day it was computed.
+    assert!(!lifecycle.is_active);
+    assert!(winter.lifecycle("2026-12-20").is_active);
+    assert!(!winter.lifecycle("2026-12-17").is_active);
 
     // Dates known and not started yet.
     let mut data = CourseTermData::default();

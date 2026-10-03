@@ -64,6 +64,9 @@ public protocol SettingsStore: AnyObject, Sendable {
     var appearance: AppAppearance { get set }
     /// The app-domain `AppleLanguages` override (Reopen Now); nil removes it.
     var appleLanguages: [String]? { get set }
+    /// Reminders handed to the system's notification center that aren't marked shown yet, with
+    /// when they fire (`ReminderDelivery`): what the system holds, not policy.
+    var handedOverReminders: [String: Date] { get set }
 }
 
 /// `UserDefaults.standard` (the app's own domain).
@@ -97,6 +100,18 @@ public final class UserDefaultsSettingsStore: SettingsStore, @unchecked Sendable
     }
 }
 
+extension UserDefaultsSettingsStore {
+    public var handedOverReminders: [String: Date] {
+        get {
+            let stored = defaults.dictionary(forKey: "handedOverReminders") as? [String: Double] ?? [:]
+            return stored.mapValues { Date(timeIntervalSince1970: $0) }
+        }
+        set {
+            defaults.set(newValue.mapValues(\.timeIntervalSince1970), forKey: "handedOverReminders")
+        }
+    }
+}
+
 /// Settings that live only as long as the process (tests, snapshots).
 public final class InMemorySettingsStore: SettingsStore, @unchecked Sendable {
     // Only touched from the main actor in practice; the lock keeps the Sendable promise honest.
@@ -104,6 +119,7 @@ public final class InMemorySettingsStore: SettingsStore, @unchecked Sendable {
     private var _language: AppLanguage
     private var _appearance: AppAppearance
     private var _appleLanguages: [String]?
+    private var _handedOverReminders: [String: Date] = [:]
 
     public init(language: AppLanguage = .system, appearance: AppAppearance = .system) {
         _language = language
@@ -123,5 +139,10 @@ public final class InMemorySettingsStore: SettingsStore, @unchecked Sendable {
     public var appleLanguages: [String]? {
         get { lock.withLock { _appleLanguages } }
         set { lock.withLock { _appleLanguages = newValue } }
+    }
+
+    public var handedOverReminders: [String: Date] {
+        get { lock.withLock { _handedOverReminders } }
+        set { lock.withLock { _handedOverReminders = newValue } }
     }
 }

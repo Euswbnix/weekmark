@@ -7,24 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useAiErrorText } from "./useAiErrorText";
 
-/** Same address, ignoring a trailing slash and localhost vs 127.0.0.1. */
-function sameAddress(a: string, b: string): boolean {
-  const norm = (u: string) => u.replace(/\/+$/, "").replace("//localhost", "//127.0.0.1");
-  return norm(a) === norm(b);
-}
-
 /**
  * "Models on this computer": Ollama and LM Studio found on loopback (asked again each time the
  * page opens, and on "Look again"). A running server can be added in one click; nothing is
- * downloaded.
+ * downloaded. The facade says which preset to add it as and whether it's already added.
  */
-export function LocalServers({
-  providers,
-  onAdded,
-}: {
-  providers: ModelProviderRecord[];
-  onAdded: (record: ModelProviderRecord) => void;
-}) {
+export function LocalServers({ onAdded }: { onAdded: (record: ModelProviderRecord) => void }) {
   const { t } = useTranslation("ai");
   const servers = useLocalServers();
   const errorText = useAiErrorText();
@@ -53,9 +41,7 @@ export function LocalServers({
             <ServerRow
               key={server.kind}
               server={server}
-              added={providers.some(
-                (p) => p.preset === server.kind && sameAddress(p.base_url, server.base_url),
-              )}
+              added={server.provider_id != null}
               onAdded={onAdded}
             />
           ))}
@@ -93,7 +79,7 @@ function ServerRow({
     if (add.isPending) return;
     try {
       const record = await add.mutateAsync({
-        preset: server.kind,
+        preset: server.preset,
         baseUrl: server.base_url,
         apiKey: null,
       });

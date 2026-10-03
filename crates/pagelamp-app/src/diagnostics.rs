@@ -302,6 +302,43 @@ fn check_extract_worker(worker: Option<&Path>) -> ExtractWorkerCheck {
     ExtractWorkerCheck { status, spawn_ms }
 }
 
+/// PageLamp's own model runs, counts only (plan M3): the pinned and installed Codex versions,
+/// the Claude plan's state in this build, runs by outcome and failures by kind. No model
+/// names, prompts, answers or paths.
+fn ai_run_lines(data_dir: &Path) -> String {
+    let installed = crate::ai::codex::installed_versions(data_dir);
+    let mut out = format!(
+        "- Codex (ChatGPT plan): pinned {} · installed by {}: {}\n\
+         - Claude Code (Claude plan): not in this build\n",
+        pagelamp_llm::codex::pin().version,
+        brand::PRODUCT_NAME,
+        if installed.is_empty() {
+            "none".to_string()
+        } else {
+            installed.join(", ")
+        }
+    );
+    let counts = |rows: Vec<(String, u32)>| {
+        if rows.is_empty() {
+            "none".to_string()
+        } else {
+            rows.iter()
+                .map(|(what, n)| format!("{what} {n}"))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        }
+    };
+    let store = Store::open_read_only(&paths::db_path_in(data_dir)).ok();
+    if let Some(store) = store {
+        out.push_str(&format!(
+            "- AI runs (13 months): {}\n- Failed AI runs kept, by kind: {}\n",
+            counts(store.ai_usage_outcomes().unwrap_or_default()),
+            counts(store.failed_generation_kinds().unwrap_or_default())
+        ));
+    }
+    out
+}
+
 /// "openai (key present), ollama (on this computer, running)": the providers in one line.
 pub fn describe_ai_providers(ai: &crate::ai::AiDoctor) -> String {
     if ai.providers.is_empty() {
@@ -487,6 +524,7 @@ pub(crate) fn report_in(
         yes(doctor.mcp_clients.claude_code),
         yes(doctor.mcp_clients.codex)
     ));
+    out.push_str(&ai_run_lines(data_dir));
     out.push_str("\n## Sources\n\n");
     if doctor.sources.is_empty() {
         out.push_str("- none\n");
@@ -1150,5 +1188,67 @@ mod tests {
             let mode = std::fs::metadata(&aliases).unwrap().permissions().mode();
             assert_eq!(mode & 0o077, 0);
         }
+    }
+
+    /// The AI lines are counts only: runs by outcome and failures by kind, never a model name
+    /// (plan M3).
+    #[test]
+    fn the_report_counts_ai_runs_without_naming_models() {
+        use pagelamp_core::ai::{AiFeature, UsageRecord};
+        use pagelamp_core::store::{GenerationRecord, GenerationStatus};
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&paths::db_path_in(temp.path())).unwrap();
+        for outcome in ["ok", "ok", "failed"] {
+            store
+                .record_ai_usage(&UsageRecord {
+                    at: chrono::Utc::now(),
+                    backend: "provider:demo".into(),
+                    model: "secret-model-name".into(),
+                    feature: AiFeature::StudyPlan,
+                    input_uncached: 10,
+                    cache_read: 0,
+                    cache_write: 0,
+                    output: 5,
+                    reasoning: None,
+                    micro_usd: None,
+                    cost_basis: "unpriced".into(),
+                    estimated: false,
+                    outcome: outcome.into(),
+                })
+                .unwrap();
+        }
+        store
+            .record_generation(&GenerationRecord {
+                id: "g1".into(),
+                feature: AiFeature::StudyPlan,
+                course_id: None,
+                week: None,
+                backend: "provider:demo".into(),
+                model: "secret-model-name".into(),
+                status: GenerationStatus::Failed,
+                created_at: chrono::Utc::now(),
+                prompt_version: 1,
+                output_json: None,
+                summary_json: None,
+                error_kind: Some("bad_output".into()),
+                week_starts_on: None,
+            })
+            .unwrap();
+        drop(store);
+        let report = report_in(temp.path(), &MemorySecrets::new(), None);
+        assert!(
+            report.contains("- Codex (ChatGPT plan): pinned "),
+            "{report}"
+        );
+        assert!(report.contains("installed by PageLamp: none"), "{report}");
+        assert!(
+            report.contains("- AI runs (13 months): failed 1 · ok 2"),
+            "{report}"
+        );
+        assert!(
+            report.contains("- Failed AI runs kept, by kind: bad_output 1"),
+            "{report}"
+        );
+        assert!(!report.contains("secret-model-name"), "{report}");
     }
 }

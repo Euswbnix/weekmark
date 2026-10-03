@@ -36,7 +36,14 @@
       "expired": "Expired Canvas Token",
       "error": "Missing Course Folder",
       "busy": "Another Sync Running",
-      "crashed": "Recovered from a Crash"
+      "crashed": "Recovered from a Crash",
+      "aiKey": "AI: API Key Set Up",
+      "aiLocal": "AI: Model on This Mac",
+      "aiUnpriced": "AI: Model Without a Price",
+      "aiBudget": "AI: Budget Almost Used",
+      "aiDisclosureChanged": "AI: Disclosure Changed",
+      "aiErrors": "AI: Provider Errors",
+      "weeklyNoteMonday": "AI: Weekly Note on Monday"
     },
     "runMockSync": "Run Mock Sync",
     "runMockSyncRejected": "Run Mock Sync with a Rejected Token",

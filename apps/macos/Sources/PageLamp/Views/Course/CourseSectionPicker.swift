@@ -1,5 +1,5 @@
 // The course page's section picker (spec §3.2 "Section picker", §3.2.1): This Week · Deadlines ·
-// Timeline. Wide, a custom segmented control that reads as the system's 27 tabs control, with one
+// Timeline, then Explain where it's on (M3, preview builds). Wide, a custom segmented control that reads as the system's 27 tabs control, with one
 // glass thumb that slides on every change (GlassSegmentedControl, Chrome/) over a SwiftUI track;
 // narrow, the system pop-up menu, so the picker never runs past the reading column (English at the
 // minimum window with the inspector open: its segments are wider than Chinese ones).
@@ -9,6 +9,7 @@ import PageLampModel
 
 struct CourseSectionPicker: View {
     let ui: CourseUIState
+    @Environment(AppModel.self) private var model
     @Environment(\.l10n) private var l10n
     @Environment(\.drawsControlStandIns) private var standIns
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -61,11 +62,14 @@ struct CourseSectionPicker: View {
     }
 
     private var sections: [(section: CourseSection, title: String)] {
-        [
-            (.week, l10n("mac.course.sections.week")),
-            (.deadlines, l10n("course.tabs.deadlines")),
-            (.timeline, l10n("course.tabs.timeline")),
-        ]
+        CourseSection.shown(explain: model.aiExplain).map { section in
+            switch section {
+            case .week: (section, l10n("mac.course.sections.week"))
+            case .deadlines: (section, l10n("course.tabs.deadlines"))
+            case .timeline: (section, l10n("course.tabs.timeline"))
+            case .explain: (section, l10n("course.tabs.explain"))
+            }
+        }
     }
 
     private func index(of section: CourseSection) -> Int {

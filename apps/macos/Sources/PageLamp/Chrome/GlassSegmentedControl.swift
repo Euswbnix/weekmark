@@ -11,7 +11,7 @@
 // An `NSControl`, so AppKit keeps the system control's focus rules (a Tab stop only with Full
 // Keyboard Access on; a click never takes focus, as with the system control; first mouse), draws
 // its focus ring (`drawFocusRingMask`) and routes keys; the accessibility tree (a tab group of
-// three tab buttons, as the system control reports it) is in GlassSegmentedAccessibility.swift,
+// one tab button per section, as the system control reports it) is in GlassSegmentedAccessibility.swift,
 // the behaviour rules in `SegmentedNavigation`. The track is SwiftUI, behind the control
 // (`SegmentedTrack`); the narrow fallback stays the system pop-up menu (CourseSectionPicker).
 

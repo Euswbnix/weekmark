@@ -89,7 +89,9 @@ Rust workspace:
 - MCP opens a fresh read-only connection per request inside `spawn_blocking` (sub-ms). No global
   mutex, never hold a connection across `.await`.
 - Heavy work (download, extract, chunk, index) happens at sync time only; MCP tools are indexed reads.
-- `save_study_plan` is the only MCP write: short read-write transaction + `busy_timeout=5000`.
+- `save_study_plan` and `propose_course_calendar` are the only MCP writes: short read-write
+  transactions + `busy_timeout=5000`. A calendar proposal is stored as `proposed`; only the
+  app accepts it.
 - `pagelamp mcp` must stay lightweight at startup (no model loading, no network).
 
 ## 5. App facade API (`pagelamp-app`) — the backend ⇄ frontend contract

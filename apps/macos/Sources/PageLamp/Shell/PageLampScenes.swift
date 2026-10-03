@@ -1,5 +1,6 @@
-// Scenes (spec §2.1, M1): the main window and Settings. The welcome window (M2) and the menu bar
-// extra (M3) come later.
+// Scenes (spec §2.1): the main window, Settings and, in preview builds until it ships, the menu
+// bar extra (M3; off until the student turns it on in Settings ▸ General). The welcome window (M2)
+// comes later.
 
 import AppKit
 import SwiftUI
@@ -10,7 +11,11 @@ public struct PageLampScenes: Scene {
     /// The main window's scene id (`openWindow(id:)`).
     static let mainWindowID = "main"
 
+    /// Settings ▸ General's "Show PageLamp in the menu bar" (spec §2.1: off until chosen).
+    static let showInMenuBarKey = "showInMenuBar"
+
     let model: AppModel
+    @AppStorage(PageLampScenes.showInMenuBarKey) private var showInMenuBar = false
 
     public init(model: AppModel) {
         self.model = model
@@ -38,16 +43,27 @@ public struct PageLampScenes: Scene {
             SettingsView()
                 .pageLampEnvironment(model)
         }
+
+        #if PAGELAMP_PREVIEW
+        MenuBarExtra(isInserted: $showInMenuBar) {
+            MenuBarWeekView()
+                .pageLampEnvironment(model)
+        } label: {
+            MenuBarLabel()
+                .environment(model)
+        }
+        .menuBarExtraStyle(.window)
+        #endif
     }
 }
 
-/// Last window closed → quit (there is no menu bar extra yet, spec §2.2).
+/// Last window closed → quit, unless PageLamp is in the menu bar (spec §2.2).
 public final class PageLampAppDelegate: NSObject, NSApplicationDelegate {
     override public init() {
         super.init()
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        !UserDefaults.standard.bool(forKey: PageLampScenes.showInMenuBarKey)
     }
 }

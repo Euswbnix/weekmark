@@ -195,6 +195,9 @@
     "accepted_one": "Dates accepted for {{count}} course.",
     "accepted_other": "Dates accepted for {{count}} courses.",
     "done": "Done",
-    "failed": "The syllabi couldn't be read"
+    "failed": "The syllabi couldn't be read",
+    "notNow": "Not now",
+    "notNowLabel": "Not now: reading syllabi with AI",
+    "snoozed": "We'll offer it again in two weeks."
   }
 }

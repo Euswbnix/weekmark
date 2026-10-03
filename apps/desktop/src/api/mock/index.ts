@@ -5,17 +5,19 @@
 // session. Pick a state to look at with `?scenario=` in the URL, e.g.
 //   http://localhost:1420/?scenario=expired#/sources
 // Scenarios: demo (default) · empty · expired · error · busy · crashed; updates (M0.4):
-// update-available · upgrader · upgrader-from-01 · updated · deb; worker-blocked (M0.5); AI setup
+// update-available · upgrader · upgrader-from-01 · upgrader-from-alpha1 · updated · deb; worker-blocked (M0.5); AI setup
 // (M1): ai-key · ai-local · ai-unpriced · ai-budget · ai-disclosure-changed · ai-errors; the
 // ChatGPT plan (M2), offered only in these: codex-not-installed · codex-signed-out · codex-plus ·
 // codex-edu · codex-api-key · codex-outdated-pin · codex-outdated-app · codex-free · codex-cap
 // (elsewhere the plan isn't offered, as in every build until OpenAI confirms in writing);
-// course weeks and lifecycle (M0.10): uoft-fall · phases · all-past (see courseScenarios.ts).
+// course weeks and lifecycle (M0.10): uoft-fall · phases · all-past (see courseScenarios.ts);
+// reminders (M3): reminders-due · reminders-no-tray (see reminders.ts).
+// weekly note (beta.2): weekly-note-monday (opted in, an API key, Monday; see weeklyNote.ts).
 //
 // Secrets passed to this mock (tokens, feed URLs) are validated and then dropped — never stored,
 // never logged.
 
-import { sameBackend } from "../ai";
+import { type EstimateRequest, sameBackend } from "../ai";
 import type { AvailableUpdate, PageLampApi } from "../client";
 import { ApiError } from "../errors";
 import {
@@ -37,6 +39,7 @@ import {
 import { createMockActivity } from "./activity";
 import { createMockAi } from "./ai";
 import {
+  addDays,
   defaultKeepUntil,
   isoOf,
   withCourseDates,
@@ -44,6 +47,7 @@ import {
   withStudentDates,
 } from "./calendar";
 import { buildCalendarScenarioDb } from "./courseScenarios";
+import { createExplainMock } from "./explain";
 import {
   buildMockDb,
   diagnosticReport,
@@ -56,8 +60,11 @@ import {
   type MockScenario,
   mcpClientConfigs,
 } from "./fixtures";
-import { createProposalsMock } from "./proposals";
+import { createPlanMock } from "./plan";
+import { createProposalsMock, type MockAiRun } from "./proposals";
+import { createRemindersMock } from "./reminders";
 import { createLifecycleMock } from "./removal";
+import { createWeeklyNoteMock } from "./weeklyNote";
 import { whatsNewSince } from "./whatsNew";
 
 export { MOCK_SCENARIOS, type MockScenario } from "./fixtures";
@@ -73,6 +80,8 @@ export interface MockOptions {
 }
 
 const DAY = 24 * 60 * 60 * 1000;
+/** startup_tasks lists at most this many offers and suggestions (the facade's STARTUP_LIST_MAX). */
+const STARTUP_LIST_MAX = 20;
 
 function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
@@ -157,12 +166,22 @@ export function createMockApi(options: MockOptions = {}): PageLampApi {
   let nextId = 1;
 
   // Updates (M0.4). A fresh install ("empty") hasn't seen the update-check disclosure yet; an
-  // upgrader from 0.1 hasn't seen "What's new"; some scenarios have never checked.
+  // upgrader hasn't seen "What's new"; some scenarios have never checked. 0.1 never recorded its
+  // version, so upgraders from it have none.
+  const upgradedFrom =
+    scenario === "upgrader"
+      ? MOCK_PREVIOUS_VERSION
+      : scenario === "upgrader-from-alpha1"
+        ? "0.3.0-alpha.1"
+        : null;
   const offersUpdate = scenario === "update-available" || scenario === "deb";
   const updates = {
     prefs: { auto_check: true, channel: null as UpdateChannel | null },
     disclosureSeen: scenario !== "empty",
-    whatsNewSeen: scenario !== "upgrader" && scenario !== "upgrader-from-01",
+    whatsNewSeen:
+      scenario !== "upgrader" &&
+      scenario !== "upgrader-from-01" &&
+      scenario !== "upgrader-from-alpha1",
     lastCheck: (offersUpdate || scenario === "upgrader" || scenario === "upgrader-from-01"
       ? null
       : {
@@ -259,6 +278,121 @@ export function createMockApi(options: MockOptions = {}): PageLampApi {
       confidence: "low",
     };
   }
+  /**
+   * The courses a study plan covers (the facade's plan scope): without a list, every visible,
+   * active course; with one, the named courses that aren't hidden (a course that has ended is
+   * still planned; an unknown one isn't found). None: blocked with no_course_to_plan.
+   */
+  function planCourses(wanted: readonly string[]): MockCourse[] {
+    if (wanted.length === 0) {
+      return db.courses.filter((c) => !c.course.hidden && lifecycleOf(c).is_active);
+    }
+    const named = wanted.map(findCourse).filter((c) => !c.course.hidden);
+    return named.filter((c, i) => named.findIndex((o) => o.course.id === c.course.id) === i);
+  }
+
+  /**
+   * The weekly note has nothing to write about (the facade's writable_note_context): no visible
+   * active course, no deadline in the next 7 days, and no plan item of the last 7 days or today
+   * (a hidden or removed course's left out; one of a course the mock doesn't know counts).
+   */
+  function noteHasNothingToWrite(): boolean {
+    const visible = db.courses.filter((c) => !c.course.hidden);
+    const today = isoOf(now());
+    const weekAgo = addDays(today, -7);
+    const leftOut = new Set([
+      ...db.courses.filter((c) => c.course.hidden).map((c) => c.course.id),
+      ...courseLifecycle.removedIds(),
+    ]);
+    const planItems = (db.studyPlan?.plan.items ?? []).filter(
+      (item) =>
+        item.date >= weekAgo &&
+        item.date <= today &&
+        !(item.course_id != null && leftOut.has(item.course_id)),
+    );
+    return (
+      !visible.some((c) => lifecycleOf(c).is_active) &&
+      deadlinesWithin(visible, 7, 0).length === 0 &&
+      planItems.length === 0
+    );
+  }
+  /**
+   * The AI gate of one run, as in the facade: the AI mock's estimate (its blocks; the student may
+   * override a reached budget), then who the feature's model runs on. `ai` is created below;
+   * this is only called later.
+   */
+  async function aiGate(request: EstimateRequest, overrideBudget: boolean): Promise<MockAiRun> {
+    const estimate = await ai.estimateGeneration(request);
+    const block = estimate.would_block ?? null;
+    if (block && !(block === "budget_reached" && overrideBudget)) {
+      throw new ApiError("blocked", "The AI gate stopped this run.", { blocked: block });
+    }
+    const status = await ai.aiStatus();
+    const choice = status.features.find((f) => f.feature === request.feature)?.choice;
+    const backend = choice
+      ? status.backends.find((b) => sameBackend(b.backend, choice.backend))
+      : undefined;
+    if (!choice || !backend) {
+      throw new ApiError("blocked", "No model chosen.", { blocked: "no_model_chosen" });
+    }
+    return {
+      backend_label: backend.label,
+      model: choice.model,
+      on_device: backend.kind === "local",
+    };
+  }
+
+  // Reminders, their settings, the tray and the login item (reminders.ts).
+  const { dueNow: dueReminders, ...remindersApi } = createRemindersMock({
+    scenario,
+    now,
+    respond,
+    courses: () => db.courses,
+  });
+
+  // Study plans written by PageLamp (plan.ts).
+  const studyPlans = createPlanMock({
+    db,
+    now,
+    respond,
+    step: () => sleep(syncStep),
+    activity,
+    gate: (courses, horizonDays, overrideBudget) =>
+      aiGate({ feature: "study_plan", courses, horizon_days: horizonDays }, overrideBudget),
+    planCourses,
+  });
+
+  // Weekly explanations (explain.ts).
+  const explanations = createExplainMock({
+    now,
+    respond,
+    step: () => sleep(syncStep),
+    activity,
+    gate: (courseId, week, include, overrideBudget) =>
+      aiGate({ feature: "weekly_explanation", course: courseId, week, include }, overrideBudget),
+    findCourse,
+  });
+
+  // The AI weekly note and "Prepare it on Monday" (weeklyNote.ts).
+  const weeklyNotes = createWeeklyNoteMock({
+    scenario,
+    now,
+    respond,
+    step: () => sleep(syncStep),
+    activity,
+    courses: () => db.courses,
+    lifecycleOf: (c) => lifecycleOf(c),
+    deadlinesWithin,
+    nothingToWrite: noteHasNothingToWrite,
+    gate: (overrideBudget) => aiGate({ feature: "weekly_note" }, overrideBudget),
+    noteBackend: async () => {
+      const status = await ai.aiStatus();
+      const choice = status.features.find((f) => f.feature === "weekly_note")?.choice;
+      if (!choice) return null;
+      return status.backends.find((b) => sameBackend(b.backend, choice.backend))?.kind ?? null;
+    },
+  });
+
   // Calendar proposals, candidates and syllabus reading (proposals.ts).
   const courseProposals = createProposalsMock({
     db,
@@ -269,29 +403,8 @@ export function createMockApi(options: MockOptions = {}): PageLampApi {
     findCourse,
     step: () => sleep(syncStep),
     // The AI mock's estimate is the gate, as in the facade (created below; called later).
-    aiGate: async (courseId, overrideBudget) => {
-      const estimate = await ai.estimateGeneration({
-        feature: "course_calendar",
-        courses: [courseId],
-      });
-      const block = estimate.would_block ?? null;
-      if (block && !(block === "budget_reached" && overrideBudget)) {
-        throw new ApiError("blocked", "The AI gate stopped this run.", { blocked: block });
-      }
-      const status = await ai.aiStatus();
-      const choice = status.features.find((f) => f.feature === "course_calendar")?.choice;
-      const backend = choice
-        ? status.backends.find((b) => sameBackend(b.backend, choice.backend))
-        : undefined;
-      if (!choice || !backend) {
-        throw new ApiError("blocked", "No model chosen.", { blocked: "no_model_chosen" });
-      }
-      return {
-        backend_label: backend.label,
-        model: choice.model,
-        on_device: backend.kind === "local",
-      };
-    },
+    aiGate: (courseId, overrideBudget) =>
+      aiGate({ feature: "course_calendar", courses: [courseId] }, overrideBudget),
     applyCalendar: (c, input, origin, aiLabel) => {
       const next = withCourseDates(c.timeline, input, isoOf(now()));
       c.timeline = {
@@ -530,6 +643,8 @@ export function createMockApi(options: MockOptions = {}): PageLampApi {
     stepMs: syncStep,
     courses: () => db.courses,
     findCourse,
+    noteHasNothingToWrite,
+    planCourses,
   });
 
   /** A material with a local file on this computer (and, to open it, a document type). */
@@ -554,6 +669,28 @@ export function createMockApi(options: MockOptions = {}): PageLampApi {
     ...ai,
     ...courseLifecycle.api,
     ...courseProposals.api,
+    // One Stop for every run: a syllabus reading, a study plan, an explanation or a note.
+    cancelGeneration: async (generationId) => {
+      studyPlans.cancel(generationId);
+      explanations.cancel(generationId);
+      weeklyNotes.cancel(generationId);
+      await courseProposals.api.cancelGeneration(generationId);
+    },
+    writeWeeklyNote: weeklyNotes.writeWeeklyNote,
+    weeklyNotes: weeklyNotes.weeklyNotes,
+    deleteWeeklyNote: weeklyNotes.deleteWeeklyNote,
+    weeklyNoteSettings: weeklyNotes.weeklyNoteSettings,
+    setPrepareWeeklyNoteOnMonday: weeklyNotes.setPrepareWeeklyNoteOnMonday,
+    explainWeek: explanations.explainWeek,
+    savedExplanations: explanations.savedExplanations,
+    deleteExplanation: explanations.deleteExplanation,
+    aiOutputLanguage: explanations.aiOutputLanguage,
+    setAiOutputLanguage: explanations.setAiOutputLanguage,
+    generateStudyPlan: studyPlans.generateStudyPlan,
+    planLimits: studyPlans.planLimits,
+    acceptStudyPlan: studyPlans.acceptStudyPlan,
+    setStudyPlanItemDone: studyPlans.setStudyPlanItemDone,
+    ...remindersApi,
 
     downloadMaterialFiles: async (courseId, materialIds, onEvent) => {
       const c = findCourse(courseId);
@@ -927,23 +1064,33 @@ export function createMockApi(options: MockOptions = {}): PageLampApi {
       respond(() => {
         updates.prefs = { auto_check: prefs.auto_check, channel: prefs.channel ?? null };
       }),
-    startupTasks: () =>
-      respond(() => {
+    startupTasks: async () => {
+      // Monday's note (weeklyNote.ts): asks who runs the note's model, so it's read first.
+      const prepareWeeklyNote = await weeklyNotes.prepareNow();
+      return respond(() => {
         const last = updates.lastCheck ? Date.parse(updates.lastCheck.at) : null;
         return {
-          // 0.1 never recorded its version, so upgraders from it have none.
-          whats_new: updates.whatsNewSeen
-            ? null
-            : whatsNewSince(scenario === "upgrader" ? MOCK_PREVIOUS_VERSION : null),
+          prepare_weekly_note: prepareWeeklyNote,
+          whats_new: updates.whatsNewSeen ? null : whatsNewSince(upgradedFrom),
           update_check_due:
             updates.prefs.auto_check &&
             updates.disclosureSeen &&
             updates.whatsNewSeen &&
             (last === null || last <= now().getTime() - DAY),
-          updated_from:
-            scenario === "updated" || scenario === "upgrader" ? MOCK_PREVIOUS_VERSION : null,
+          // The facade's launch.updated_from, which also gives What's new its `since`.
+          updated_from: upgradedFrom ?? (scenario === "updated" ? MOCK_PREVIOUS_VERSION : null),
+          // What came due since the last launch (reminders-due); the purge: none in the mock yet.
+          due_reminders: dueReminders(),
+          purge_due: false,
+          removed_files_waiting: 0,
+          // The same offers as the Courses page's card, "Not now" applied (proposals.ts).
+          calendar_offers: courseProposals.offersNow().slice(0, STARTUP_LIST_MAX),
+          calendar_offers_total: courseProposals.offersNow().length,
+          removal_suggestions: [],
+          removal_suggestions_total: 0,
         };
-      }),
+      });
+    },
     acknowledgeWhatsNew: () =>
       respond(() => {
         updates.whatsNewSeen = true;

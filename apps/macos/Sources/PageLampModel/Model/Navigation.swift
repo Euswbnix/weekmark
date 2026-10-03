@@ -12,11 +12,24 @@ public enum Destination: Hashable, Codable, Sendable {
     case connect
 }
 
-/// The sections of a course's detail page.
+/// The sections of a course's detail page, in picker order (Explain last: M3, where the AI
+/// screens are on).
 public enum CourseSection: String, CaseIterable, Codable, Sendable {
     case week
     case deadlines
     case timeline
+    case explain
+
+    /// The sections the picker offers: Explain only where it's on.
+    public static func shown(explain: Bool) -> [CourseSection] {
+        explain ? allCases : allCases.filter { $0 != .explain }
+    }
+
+    /// The section to show: Explain falls back to This Week where it's off (like the Tauri app's
+    /// unknown tab).
+    public func shown(explain: Bool) -> CourseSection {
+        self == .explain && !explain ? .week : self
+    }
 }
 
 /// One course's section and week, kept for the session (a relaunch opens at *now*).

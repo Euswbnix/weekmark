@@ -117,6 +117,15 @@ fn the_digest_lists_this_week_deadlines_and_plan_progress() {
                 item(today - Duration::days(1), "Review quiz", false),
                 item(today - Duration::days(9), "Too old", true),
                 item(today, "Practice problems", false),
+                // The hidden course's, by id and by code: not counted, not listed.
+                StudyPlanItem {
+                    course_id: Some(hidden.clone()),
+                    ..item(today - Duration::days(2), "Hidden course review", true)
+                },
+                StudyPlanItem {
+                    course_id: Some("demo404".into()),
+                    ..item(today, "Hidden course practice", false)
+                },
             ],
             notes: None,
         })

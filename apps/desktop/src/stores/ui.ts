@@ -22,6 +22,8 @@ interface UiState {
   onboardingSkipped: boolean;
   /** When the student confirmed the AI disclosure (ISO instant), null = not yet. */
   aiDisclosureAcknowledgedAt: string | null;
+  /** Onboarding's "Let PageLamp write plans and explanations" was answered: never shown again. */
+  aiOfferAnswered: boolean;
   transparency: TransparencyPreference;
   contrast: ContrastPreference;
   setTheme: (theme: ThemePreference) => void;
@@ -31,6 +33,7 @@ interface UiState {
   setOnboardingSkipped: (skipped: boolean) => void;
   /** Tick/untick "I understand" under the AI disclosure. */
   setAiDisclosureAcknowledged: (acknowledged: boolean) => void;
+  setAiOfferAnswered: () => void;
   setTransparency: (transparency: TransparencyPreference) => void;
   setContrast: (contrast: ContrastPreference) => void;
 }
@@ -44,6 +47,7 @@ export const useUiStore = create<UiState>()(
       showPastCourses: false,
       onboardingSkipped: false,
       aiDisclosureAcknowledgedAt: null,
+      aiOfferAnswered: false,
       transparency: "auto",
       contrast: "auto",
       setTheme: (theme) => set({ theme }),
@@ -53,6 +57,7 @@ export const useUiStore = create<UiState>()(
       setOnboardingSkipped: (onboardingSkipped) => set({ onboardingSkipped }),
       setAiDisclosureAcknowledged: (acknowledged) =>
         set({ aiDisclosureAcknowledgedAt: acknowledged ? new Date().toISOString() : null }),
+      setAiOfferAnswered: () => set({ aiOfferAnswered: true }),
       setTransparency: (transparency) => set({ transparency }),
       setContrast: (contrast) => set({ contrast }),
     }),
@@ -68,6 +73,7 @@ export const useUiStore = create<UiState>()(
         showPastCourses: s.showPastCourses,
         onboardingSkipped: s.onboardingSkipped,
         aiDisclosureAcknowledgedAt: s.aiDisclosureAcknowledgedAt,
+        aiOfferAnswered: s.aiOfferAnswered,
         transparency: s.transparency,
         contrast: s.contrast,
       }),

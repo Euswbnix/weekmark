@@ -6,6 +6,7 @@ import { useAiStatus } from "@/api/ai-queries";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsSection } from "@/features/settings/SettingsSection";
+import { settingsSections } from "@/lib/routes";
 import { ApiKeyDialog, type ApiKeyDialogMode } from "./ApiKeyDialog";
 import { BackendRow } from "./BackendRow";
 import { BudgetField } from "./BudgetField";
@@ -53,7 +54,11 @@ export function AiModelsSection() {
     ) ?? null;
 
   return (
-    <SettingsSection title={t("settings.title")} description={t("settings.description")}>
+    <SettingsSection
+      id={settingsSections.aiModels}
+      title={t("settings.title")}
+      description={t("settings.description")}
+    >
       {status.isPending ? (
         <Skeleton className="h-24 w-full" />
       ) : status.isError ? (
@@ -94,10 +99,7 @@ export function AiModelsSection() {
             {t("settings.addKey")}
           </Button>
 
-          <LocalServers
-            providers={status.data.providers}
-            onAdded={(record) => showAdded(record.provider_id)}
-          />
+          <LocalServers onAdded={(record) => showAdded(record.provider_id)} />
 
           {backends.length > 0 ? (
             <FeatureModels backends={backends} features={status.data.features} />

@@ -3,6 +3,7 @@ import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { CourseSummary, StudyPlan, StudyPlanItem } from "@/api/types";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { formatIsoDay } from "@/lib/format";
 import { useToday } from "@/lib/useToday";
 import { cn } from "@/lib/utils";
@@ -12,13 +13,15 @@ import { addDays, groupPlanByDate, isInFocus, type PlanDay } from "./lib/plan";
 interface StudyPlanBodyProps {
   plan: StudyPlan;
   courses: CourseSummary[] | undefined;
+  /** M3: tick an item off (its position in the saved plan); without it the plan is read-only. */
+  onToggle?: (position: number, done: boolean) => void;
 }
 
 /**
  * Notes plus the plan's items grouped by day. Collapsed, it shows today and the next 2 days;
  * "Show full plan" reveals every day (including past ones).
  */
-export function StudyPlanBody({ plan, courses }: StudyPlanBodyProps) {
+export function StudyPlanBody({ plan, courses, onToggle }: StudyPlanBodyProps) {
   const { t } = useTranslation("courses");
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
@@ -47,7 +50,13 @@ export function StudyPlanBody({ plan, courses }: StudyPlanBodyProps) {
           ) : (
             <ol className="space-y-3">
               {shown.map((day) => (
-                <PlanDayGroup key={day.date} day={day} today={today} courses={courses} />
+                <PlanDayGroup
+                  key={day.date}
+                  day={day}
+                  today={today}
+                  courses={courses}
+                  onToggle={onToggle}
+                />
               ))}
             </ol>
           )}
@@ -55,7 +64,9 @@ export function StudyPlanBody({ plan, courses }: StudyPlanBodyProps) {
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">{t("plan.readOnly")}</p>
+        <p className="text-xs text-muted-foreground">
+          {onToggle ? t("plan.tickHint") : t("plan.readOnly")}
+        </p>
         {canExpand ? (
           <Button
             variant="ghost"
@@ -77,10 +88,12 @@ function PlanDayGroup({
   day,
   today,
   courses,
+  onToggle,
 }: {
   day: PlanDay;
   today: string;
   courses: CourseSummary[] | undefined;
+  onToggle?: (position: number, done: boolean) => void;
 }) {
   const { t: tc, i18n } = useTranslation();
   const isToday = day.date === today;
@@ -109,6 +122,7 @@ function PlanDayGroup({
             key={position}
             item={item}
             courseLabel={courseLabelFor(item.course_id, courses)}
+            onToggle={onToggle ? (done) => onToggle(position, done) : undefined}
           />
         ))}
       </ul>
@@ -116,13 +130,32 @@ function PlanDayGroup({
   );
 }
 
-/** One task. Done is shown with a check, a "Done" label and quieter text (read-only). */
-function PlanItemRow({ item, courseLabel }: { item: StudyPlanItem; courseLabel: string | null }) {
+/**
+ * One task. Done is shown with a check, a "Done" label and quieter text; with `onToggle` the
+ * check is a checkbox named after the task.
+ */
+function PlanItemRow({
+  item,
+  courseLabel,
+  onToggle,
+}: {
+  item: StudyPlanItem;
+  courseLabel: string | null;
+  onToggle?: (done: boolean) => void;
+}) {
   const { t } = useTranslation("courses");
   const done = item.done === true;
+  const name = courseLabel ? `${courseLabel} · ${item.title}` : item.title;
   return (
     <li className={cn("flex items-start gap-2.5 py-1.5", done && "text-muted-foreground")}>
-      {done ? (
+      {onToggle ? (
+        <Checkbox
+          checked={done}
+          aria-label={name}
+          className="mt-0.5"
+          onCheckedChange={(value) => onToggle(value === true)}
+        />
+      ) : done ? (
         <CircleCheck className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
       ) : (
         <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />

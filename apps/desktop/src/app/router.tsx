@@ -4,8 +4,10 @@ import { ConnectPage } from "@/features/connect/ConnectPage";
 import { CourseDetailPage } from "@/features/course/CourseDetailPage";
 import { CoursesPage } from "@/features/courses/CoursesPage";
 import { OnboardingPage } from "@/features/onboarding/OnboardingPage";
+import { PlanPage } from "@/features/plan/PlanPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
+import { AI_SETUP_ENABLED } from "@/lib/features";
 import { paths } from "@/lib/routes";
 import { RouteError } from "./RouteError";
 import { StartGate } from "./StartGate";
@@ -25,6 +27,8 @@ export const routes: RouteObject[] = [
       { path: paths.sources, element: <SourcesPage /> },
       { path: paths.connect, element: <ConnectPage /> },
       { path: paths.settings, element: <SettingsPage /> },
+      // M3: PageLamp writes study plans (mock only until the AI commands ship, like AI setup).
+      ...(AI_SETUP_ENABLED ? [{ path: paths.plan, element: <PlanPage /> }] : []),
       { path: "*", element: <Navigate to={paths.courses} replace /> },
     ],
   },
