@@ -11,6 +11,8 @@
     "statusLabel": "课程状态",
     "freshness": "数据来源：{{source}} · {{when}}同步",
     "freshnessNever": "数据来源：{{source}} · 尚未同步",
+    "freshnessWithDeadlines": "数据来源：{{source}} · {{when}}同步 · {{deadlines}}检查过截止日期和公告",
+    "freshnessPending": "数据来源：{{source}} · 资料尚未读取 · {{when}}检查过截止日期和公告",
     "syncing": "正在同步…",
     "openWebsite": "打开课程网站",
     "hidden": "已隐藏",
@@ -54,6 +56,10 @@
       "titleRecent": "近期没有新资料",
       "description": "同步后，放在对应周次模块或文件夹里的资料会显示在这里。",
       "action": "打开“数据来源与同步”"
+    },
+    "pending": {
+      "title": "这门课的资料还没有读取",
+      "description": "{{product}} 在检查截止日期和公告时发现了这门课。它的模块和资料会在下一次完整同步时读取。想现在就读取，可以到“数据来源与同步”点“同步”。"
     },
     "announcements": {
       "title": "近期公告",

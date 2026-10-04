@@ -154,6 +154,34 @@ describe("SourcesPage", () => {
     );
   });
 
+  it("says plainly that a sync is already running when 'Sync now' can't start one", async () => {
+    const api = createMockApi({ latencyMs: 0, syncStepMs: 0, scenario: "expired" });
+    const realSyncAll = api.syncAll;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    api.syncAll = async (req, onEvent: (event: SyncEvent) => void) => {
+      await gate;
+      return realSyncAll(req, onEvent);
+    };
+    const { user } = renderRoute("/sources", { api });
+    // This window's own sync is in the way (the student's here; it could be an automatic one).
+    await user.click(await screen.findByRole("button", { name: "Sync all" }));
+
+    await user.click(screen.getByRole("button", { name: "Replace token for Demo Canvas" }));
+    const dialog = await screen.findByRole("dialog", { name: "Replace token" });
+    await user.type(within(dialog).getByLabelText("New access token"), NEW_TOKEN);
+    await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+    await user.click(await screen.findByRole("button", { name: "Sync now" }));
+
+    // Not "(maybe from the command line)": it is this window's.
+    expect(
+      await screen.findByText("A sync is already running. Try again when it finishes."),
+    ).toBeInTheDocument();
+    release();
+  });
+
   it("keeps the replace dialog open and explains a rejected token", async () => {
     const { user } = renderRoute("/sources", { scenario: "expired" });
     await user.click(await screen.findByRole("button", { name: "Replace token for Demo Canvas" }));
@@ -206,6 +234,8 @@ describe("SourcesPage", () => {
       "University of Example — Canvas (Faculty of Arts & Science, St. George campus, all sections)";
     const api = createMockApi({ latencyMs: 0, syncStepMs: 0 });
     await api.addFolderSource("/Users/demo/Documents/Long", null, label);
+    // A source that has never synced makes an automatic sync due; this is about its "New" badge.
+    await api.setSyncPrefs({ auto_sync: "off" });
     renderRoute("/sources", { api });
 
     const heading = await screen.findByRole("heading", { level: 2, name: label });

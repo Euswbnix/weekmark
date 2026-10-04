@@ -6,11 +6,12 @@ import type { CourseSummary, SourceErrorKind } from "@/api/types";
 import { AiMaterialsStatus } from "@/components/common/AiMaterialsStatus";
 import { PastCourseBadge } from "@/components/common/PastCourseBadge";
 import { PolicyBadge } from "@/components/common/PolicyBadge";
-import { SentenceWithTime, WHEN } from "@/components/common/SentenceWithTime";
+import { SentenceWithTime, WHEN, WHEN_2 } from "@/components/common/SentenceWithTime";
 import { WeekLabel } from "@/components/common/WeekLabel";
 import { Badge } from "@/components/ui/badge";
 import { KeepCurrentCardButton } from "@/features/course/lifecycle/KeepCurrentCardButton";
 import { formatIsoDate } from "@/lib/format";
+import { deadlinesReadSince } from "@/lib/freshness";
 import { paths } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { deadlineTime } from "./lib/thisWeek";
@@ -37,6 +38,7 @@ export function CourseCard({ summary, sourceError, headingLevel = "h3" }: Course
   const { t: tc } = useTranslation();
   const { t: tcal, i18n } = useTranslation("calendar");
   const { course, timeline, lifecycle, counts, next_deadline: next } = summary;
+  const deadlinesAt = deadlinesReadSince(summary.last_synced_at, summary.deadlines_synced_at);
   const nextWhen = next ? deadlineTime(next) : null;
   const past = lifecycle.group === "past";
   // The "Set the first day of classes" hint is for the current group only. (Dates can still
@@ -106,17 +108,38 @@ export function CourseCard({ summary, sourceError, headingLevel = "h3" }: Course
         </span>
         <PolicyBadge plain policy={course.ai_policy} />
         {course.ai_policy === "unknown" ? <span>{t("card.setPolicy")}</span> : null}
-        <AiMaterialsStatus
-          state={summary.ai_materials}
-          indexed={counts.indexed_materials}
-          total={counts.materials}
-          className="items-center gap-1.5 [&>svg]:mt-0 [&>svg]:size-3.5"
-        />
+        {/* Not read yet isn't "0 of 0 readable": the line below says what is missing. */}
+        {summary.structure_pending ? null : (
+          <AiMaterialsStatus
+            state={summary.ai_materials}
+            indexed={counts.indexed_materials}
+            total={counts.materials}
+            className="items-center gap-1.5 [&>svg]:mt-0 [&>svg]:size-3.5"
+          />
+        )}
       </div>
 
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span>
-          {summary.last_synced_at ? (
+          {/* "Synced" is the source's last full sync. A course found since by a lighter
+              automatic sync has deadlines and announcements only; and deadlines read since
+              then have their own time. */}
+          {summary.structure_pending && summary.deadlines_synced_at ? (
+            <SentenceWithTime
+              text={t("card.pending", { source: summary.source_label, when: WHEN })}
+              iso={summary.deadlines_synced_at}
+            />
+          ) : summary.last_synced_at && deadlinesAt ? (
+            <SentenceWithTime
+              text={t("card.syncedAndDeadlines", {
+                source: summary.source_label,
+                when: WHEN,
+                deadlines: WHEN_2,
+              })}
+              iso={summary.last_synced_at}
+              iso2={deadlinesAt}
+            />
+          ) : summary.last_synced_at ? (
             <SentenceWithTime
               text={t("card.synced", { source: summary.source_label, when: WHEN })}
               iso={summary.last_synced_at}

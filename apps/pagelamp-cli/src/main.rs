@@ -20,8 +20,8 @@ use chrono::NaiveDate;
 use clap::{Parser, Subcommand, ValueEnum};
 use pagelamp_app::diagnostics;
 use pagelamp_app::{
-    App, AppError, McpClient, McpClientConfig, SourceSyncResult, SyncEvent, SyncRequest,
-    SyncSummary,
+    App, AppError, AutoSync, McpClient, McpClientConfig, SourceSyncResult, SyncEvent, SyncPrefs,
+    SyncRequest, SyncSummary,
 };
 use pagelamp_core::brand;
 use pagelamp_core::model::{AiMaterialsState, AiPolicy, SourceKind, SourceRecord};
@@ -72,8 +72,12 @@ enum Command {
         /// Skip Canvas files larger than this many MB.
         #[arg(long, default_value_t = 50)]
         max_file_mb: u32,
+        /// Set how often the PageLamp app syncs by itself while it is open, and sync nothing
+        /// now. (This command itself only ever syncs when you run it.)
+        #[arg(long, value_enum, value_name = "HOW_OFTEN", conflicts_with_all = ["source", "courses", "download_files"])]
+        auto: Option<AutoSyncArg>,
     },
-    /// Data folder, sources, counts and last sync.
+    /// Data folder, sources, counts, last sync and the automatic sync setting.
     Status,
     /// Your courses by group (current, upcoming, past): week or phase, next deadline, AI
     /// policy and access. With -v, why. Past courses are left out (also from --json) unless
@@ -494,8 +498,18 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             courses,
             download_files,
             max_file_mb,
+            auto,
         } => {
             let app = open_app()?;
+            if let Some(auto) = auto {
+                let setting = AutoSync::from(auto);
+                app.set_sync_prefs(SyncPrefs { auto_sync: setting })?;
+                if json {
+                    return print_json(&setting);
+                }
+                println!("Automatic sync: {}.", text::auto_sync(setting));
+                return Ok(());
+            }
             if download_files {
                 eprintln!("{}", text::CANVAS_DOWNLOAD_NOTICE);
             }
@@ -503,6 +517,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 download_files,
                 max_file_mb,
                 only_courses: courses,
+                // A sync from the command line is always one the student started.
+                automatic: None,
             };
             match source {
                 Some(id) => {
@@ -545,6 +561,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             if status.sync_in_progress {
                 println!("A sync is running right now.");
             }
+            println!("Automatic sync: {}.", text::auto_sync(status.auto_sync));
             for source in &status.sources {
                 println!("  {}", source_line(source));
             }
@@ -845,6 +862,24 @@ fn print_config(config: &McpClientConfig, with_title: bool) {
     }
     if with_title {
         println!();
+    }
+}
+
+/// `sync --auto <HOW_OFTEN>`.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AutoSyncArg {
+    Off,
+    Daily,
+    TwiceDaily,
+}
+
+impl From<AutoSyncArg> for AutoSync {
+    fn from(arg: AutoSyncArg) -> Self {
+        match arg {
+            AutoSyncArg::Off => AutoSync::Off,
+            AutoSyncArg::Daily => AutoSync::Daily,
+            AutoSyncArg::TwiceDaily => AutoSync::TwiceDaily,
+        }
     }
 }
 

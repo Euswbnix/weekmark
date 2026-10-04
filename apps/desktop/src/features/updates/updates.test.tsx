@@ -60,9 +60,11 @@ describe("What's new (upgraders)", () => {
     expect(within(sheet).getByText("Since version 0.3.0-alpha.0")).toBeInTheDocument();
     expect(within(sheet).getByText("PageLamp now updates itself")).toBeInTheDocument();
     expect(within(sheet).getByText("Weeks and phases for every course")).toBeInTheDocument();
+    expect(within(sheet).getByText("PageLamp now syncs by itself")).toBeInTheDocument();
     expect(
       within(sheet).getByRole("switch", { name: "Check for updates automatically" }),
     ).toBeChecked();
+    expect(within(sheet).getByRole("switch", { name: "Sync automatically" })).toBeChecked();
     // Nothing is checked while the student is still reading about it.
     expect(check).not.toHaveBeenCalled();
 
@@ -89,6 +91,90 @@ describe("What's new (upgraders)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(check).not.toHaveBeenCalled();
+  });
+
+  it("says what automatic sync does and what Canvas may record, before the first one", async () => {
+    renderRoute("/courses", { scenario: "upgrader" });
+    const sheet = await screen.findByRole("dialog", { name: "What's new in PageLamp" });
+    const row = within(sheet).getByText("PageLamp now syncs by itself").closest("li");
+    expect(row).toHaveTextContent("It never downloads Canvas files by itself.");
+    expect(row).toHaveTextContent("Canvas may record a full sync as your activity in each course.");
+    expect(row).toHaveTextContent("about twice a day");
+    expect(row).toHaveTextContent("go to Sources & sync → Automatic sync.");
+  });
+
+  it("turns automatic sync off from there, before What's new counts as read", async () => {
+    const api = mockApi({ scenario: "upgrader" });
+    const setSync = vi.spyOn(api, "setSyncPrefs");
+    const acknowledge = vi.spyOn(api, "acknowledgeWhatsNew");
+    const { user } = renderRoute("/courses", { api });
+    const sheet = await screen.findByRole("dialog", { name: "What's new in PageLamp" });
+    await user.click(within(sheet).getByRole("switch", { name: "Sync automatically" }));
+    await user.click(within(sheet).getByRole("button", { name: "Got it" }));
+    await waitFor(() => expect(acknowledge).toHaveBeenCalledTimes(1));
+    expect(setSync).toHaveBeenCalledWith({ auto_sync: "off" });
+    expect(await api.syncPrefs()).toEqual({ auto_sync: "off" });
+  });
+
+  it("waits for 'off' to be saved before What's new counts as read", async () => {
+    const api = mockApi({ scenario: "upgrader" });
+    let saved: () => void = () => {};
+    const setSync = vi.spyOn(api, "setSyncPrefs").mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          saved = resolve;
+        }),
+    );
+    const acknowledge = vi.spyOn(api, "acknowledgeWhatsNew");
+    const { user } = renderRoute("/courses", { api });
+    const sheet = await screen.findByRole("dialog", { name: "What's new in PageLamp" });
+    await user.click(within(sheet).getByRole("switch", { name: "Sync automatically" }));
+    await user.click(within(sheet).getByRole("button", { name: "Got it" }));
+    await waitFor(() => expect(setSync).toHaveBeenCalledTimes(1));
+    // While the save is still out, the facade isn't told yet: no sync can become due.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(acknowledge).not.toHaveBeenCalled();
+
+    saved();
+    await waitFor(() => expect(acknowledge).toHaveBeenCalledTimes(1));
+  });
+
+  it("writes nothing when the setting couldn't be read and the switch ends where it began", async () => {
+    const api = mockApi({ scenario: "upgrader" });
+    vi.spyOn(api, "syncPrefs").mockRejectedValue(new ApiError("internal", "Synthetic failure"));
+    const setSync = vi.spyOn(api, "setSyncPrefs");
+    const acknowledge = vi.spyOn(api, "acknowledgeWhatsNew");
+    const { user } = renderRoute("/courses", { api });
+    const sheet = await screen.findByRole("dialog", { name: "What's new in PageLamp" });
+    const toggle = within(sheet).getByRole("switch", { name: "Sync automatically" });
+    await user.click(toggle);
+    await user.click(toggle);
+    await user.click(within(sheet).getByRole("button", { name: "Got it" }));
+    await waitFor(() => expect(acknowledge).toHaveBeenCalledTimes(1));
+    // Off and on again isn't a choice: a stored "once a day" or "off" isn't overwritten.
+    expect(setSync).not.toHaveBeenCalled();
+  });
+
+  it("saves 'off' even when the setting couldn't be read", async () => {
+    const api = mockApi({ scenario: "upgrader" });
+    vi.spyOn(api, "syncPrefs").mockRejectedValue(new ApiError("internal", "Synthetic failure"));
+    const setSync = vi.spyOn(api, "setSyncPrefs");
+    const { user } = renderRoute("/courses", { api });
+    const sheet = await screen.findByRole("dialog", { name: "What's new in PageLamp" });
+    await user.click(within(sheet).getByRole("switch", { name: "Sync automatically" }));
+    await user.click(within(sheet).getByRole("button", { name: "Got it" }));
+    await waitFor(() => expect(setSync).toHaveBeenCalledWith({ auto_sync: "off" }));
+  });
+
+  it("leaves automatic sync as it is when its switch isn't touched", async () => {
+    const api = mockApi({ scenario: "upgrader" });
+    const setSync = vi.spyOn(api, "setSyncPrefs");
+    const { user } = renderRoute("/courses", { api });
+    const sheet = await screen.findByRole("dialog", { name: "What's new in PageLamp" });
+    await user.click(within(sheet).getByRole("button", { name: "Got it" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(setSync).not.toHaveBeenCalled();
+    expect(await api.syncPrefs()).toEqual({ auto_sync: "twice_daily" });
   });
 
   it("works for upgraders from 0.1, whose previous version is unknown", async () => {

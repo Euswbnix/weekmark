@@ -5,6 +5,14 @@
 //! then index page/announcement/syllabus HTML and (only when asked) download + index files —
 //! each outside any transaction. No `Store` is ever held across `.await`.
 //!
+//! A `user_level_only` sync (one nobody is at the app for) makes no request with a course in
+//! its path: the course list, planner items and announcements only. The rules below then keep
+//! everything it didn't read: modules, files, pages and links stay as the last full sync left
+//! them. Like any sync it removes only what it read completely: an announcement that left the
+//! listing, a syllabus that became empty, a planner note that is gone. Assignment due dates
+//! come from the planner instead (its window only: a new or moved date is taken, none is
+//! removed).
+//!
 //! Safety rules (a sync must never destroy what it merely failed to see):
 //! - Materials are pruned per kind, and only when every listing that kind depends on was read
 //!   completely (all pages, every item understood). A hidden tab, a 403, a failed fetch or a
@@ -24,6 +32,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, TimeDelta, Utc};
+use pagelamp_core::auto_sync;
 use pagelamp_core::ingest::{self, IndexOutcome};
 use pagelamp_core::model::{
     CourseUpsert, DownloadBlock, Event, Material, MaterialKind, MaterialUpsert, Module, TextStatus,
@@ -69,10 +78,23 @@ pub(crate) fn fatal(err: &CanvasError) -> Option<SourceError> {
 
 /// The first error of a call that must succeed (e.g. `/users/self`, the course list).
 pub(crate) fn required(err: CanvasError, what: &str) -> SourceError {
-    fatal(&err).unwrap_or_else(|| match err {
-        CanvasError::NotFound => no_canvas_here(),
-        other => SourceError::other(format!("Could not read {what} from Canvas: {other}.")),
-    })
+    fatal(&err)
+        .or_else(|| passing(&err))
+        .unwrap_or_else(|| match err {
+            CanvasError::NotFound => no_canvas_here(),
+            other => SourceError::other(format!("Could not read {what} from Canvas: {other}.")),
+        })
+}
+
+/// A failure on Canvas's side that may pass by itself (a 5xx): reported like a network
+/// failure, which is what it is to the student. An automatic sync keeps those quiet.
+pub(crate) fn passing(err: &CanvasError) -> Option<SourceError> {
+    match err {
+        CanvasError::Http(status) if (500..600).contains(status) => Some(SourceError::network(
+            format!("Canvas is having trouble (HTTP {status}). Try again later."),
+        )),
+        _ => None,
+    }
 }
 
 /// The Canvas address answered, but not with the Canvas API.
@@ -119,6 +141,12 @@ struct CourseResult {
     files_indexed: usize,
     /// Events from the assignments endpoint, if it was read completely.
     events: Option<Vec<Event>>,
+    /// The announcements of the window were read completely.
+    announcements_read: bool,
+    /// A full sync got an answer about the course's modules: the listing, or that the student
+    /// has none to see (403, 404). False when it failed in a way that may pass (5xx, a bad
+    /// answer) and for a sync that didn't ask.
+    structure_read: bool,
 }
 
 /// Which material kinds this sync may prune (their listings were read completely).
@@ -253,7 +281,9 @@ impl<T: CanvasTransport> Syncer<'_, T> {
             .await
             .map_err(crate::probe_error)?;
         self.run_inner().await.map_err(|err| {
-            fatal(&err).unwrap_or_else(|| SourceError::other(format!("Canvas sync failed: {err}.")))
+            fatal(&err)
+                .or_else(|| passing(&err))
+                .unwrap_or_else(|| SourceError::other(format!("Canvas sync failed: {err}.")))
         })
     }
 
@@ -296,8 +326,25 @@ impl<T: CanvasTransport> Syncer<'_, T> {
         })
         .await?;
 
+        // Courses a user-level sync creates have no structure until a full sync reads them.
+        let known_courses: HashSet<String> = if self.options.user_level_only {
+            let source_id = self.source_id.to_string();
+            with_store(self.db, move |store| {
+                Ok(store
+                    .list_courses(true)?
+                    .into_iter()
+                    .filter(|course| course.source_id == source_id)
+                    .map(|course| course.id)
+                    .collect())
+            })
+            .await?
+        } else {
+            HashSet::new()
+        };
+
         let mut new_events: Vec<Event> = Vec::new();
         let mut refreshed_courses: HashSet<String> = HashSet::new();
+        let mut announcements_read = true;
         for (index, (canvas, upsert)) in selected.iter().enumerate() {
             self.check_cancelled()?;
             let label = upsert.code.clone().unwrap_or_else(|| upsert.name.clone());
@@ -309,8 +356,13 @@ impl<T: CanvasTransport> Syncer<'_, T> {
                 Some(selected.len()),
             );
             let warnings_before = report.warnings.len();
-            match self.sync_course(canvas, upsert, &label, &mut report).await {
+            let first_seen = self.options.user_level_only && !known_courses.contains(&upsert.id);
+            match self
+                .sync_course(canvas, upsert, first_seen, &label, &mut report)
+                .await
+            {
                 Ok(result) => {
+                    announcements_read &= result.announcements_read;
                     report.course_summaries.push(CourseSyncSummary {
                         course: label.clone(),
                         modules: to_u32(result.modules),
@@ -320,6 +372,13 @@ impl<T: CanvasTransport> Syncer<'_, T> {
                         warnings: to_u32(report.warnings.len() - warnings_before),
                     });
                     report.courses += 1;
+                    if first_seen {
+                        report.new_courses.push(upsert.id.clone());
+                    } else if result.structure_read {
+                        report.read_courses.push(upsert.id.clone());
+                    } else if !self.options.user_level_only {
+                        report.unread_courses.push(upsert.id.clone());
+                    }
                     report.modules += result.modules;
                     report.materials += result.materials;
                     report.files_downloaded += result.files_downloaded;
@@ -330,7 +389,13 @@ impl<T: CanvasTransport> Syncer<'_, T> {
                     }
                 }
                 Err(err) if fatal(&err).is_some() => return Err(err),
-                Err(err) => self.warn(&mut report, format!("{label}: skipped ({err})")),
+                Err(err) => {
+                    announcements_read = false;
+                    if !self.options.user_level_only {
+                        report.unread_courses.push(upsert.id.clone());
+                    }
+                    self.warn(&mut report, format!("{label}: skipped ({err})"));
+                }
             }
         }
 
@@ -348,17 +413,41 @@ impl<T: CanvasTransport> Syncer<'_, T> {
                 end: today + TimeDelta::days(PLANNER_DAYS_AHEAD),
             })
             .await;
+        let course_of = |id: &CanvasId| course_map.get(&id.0).cloned();
         let planner_refreshed = match planner {
             Ok(listing) if listing.complete() => {
                 new_events.extend(listing.items.iter().filter_map(|item| {
-                    map::planner_item(
-                        self.ids(),
-                        &self.api.base,
-                        item,
-                        |id| course_map.get(&id.0).cloned(),
-                        self.now,
-                    )
+                    map::planner_item(self.ids(), &self.api.base, item, course_of, self.now)
                 }));
+                if self.options.user_level_only {
+                    // No course's assignments were read, so their due dates come from the
+                    // planner: the ones inside its window are added or moved. An assignment
+                    // that lost its date or was removed stays until the next full sync, and a
+                    // known one keeps its kind and link.
+                    let known: HashMap<&str, &Event> = existing_events
+                        .iter()
+                        .map(|event| (event.id.as_str(), event))
+                        .collect();
+                    new_events.extend(listing.items.iter().filter_map(|item| {
+                        let found = map::planner_due_date(
+                            self.ids(),
+                            &self.api.base,
+                            item,
+                            course_of,
+                            self.now,
+                        )?;
+                        let mut event = found.event;
+                        match known.get(event.id.as_str()) {
+                            Some(old) => {
+                                event.kind = old.kind;
+                                event.url = old.url.clone();
+                            }
+                            None if found.known_only => return None,
+                            None => {}
+                        }
+                        Some(event)
+                    }));
+                }
                 true
             }
             Ok(_) => {
@@ -432,6 +521,7 @@ impl<T: CanvasTransport> Syncer<'_, T> {
         })
         .await?;
         report.requests = self.api.transport.requests_made();
+        report.user_level_read = listing.complete() && planner_refreshed && announcements_read;
         Ok(report)
     }
 
@@ -480,10 +570,12 @@ impl<T: CanvasTransport> Syncer<'_, T> {
         listing.complete()
     }
 
+    /// `first_seen`: a `user_level_only` sync meets this course for the first time.
     async fn sync_course(
         &self,
         canvas: &json::Course,
         upsert: &CourseUpsert,
+        first_seen: bool,
         label: &str,
         report: &mut SyncReport,
     ) -> Result<CourseResult, CanvasError> {
@@ -492,16 +584,24 @@ impl<T: CanvasTransport> Syncer<'_, T> {
         let course_id = upsert.id.clone();
         let ids = self.ids();
 
+        // Only a full sync asks for anything under `/courses/:id/`. Without it nothing below
+        // is read, and (not being read completely) nothing of it is pruned.
+        let full = !self.options.user_level_only;
+
         // Tabs tell which areas the student can see (hidden tabs are usually omitted).
-        let tabs = match api
-            .get_all::<json::Tab>(Endpoint::Tabs { course: cid })
-            .await
-        {
-            Ok(listing) => Some(listing.items),
-            Err(err) => {
-                self.soft(report, label, "tabs", err)?;
-                None
+        let tabs = if full {
+            match api
+                .get_all::<json::Tab>(Endpoint::Tabs { course: cid })
+                .await
+            {
+                Ok(listing) => Some(listing.items),
+                Err(err) => {
+                    self.soft(report, label, "tabs", err)?;
+                    None
+                }
             }
+        } else {
+            None
         };
         let visible = |tab: &str| {
             tabs.as_ref()
@@ -512,11 +612,21 @@ impl<T: CanvasTransport> Syncer<'_, T> {
         let mut modules_ok = true;
         let mut modules: Option<Vec<Module>> = None;
         let mut module_items: Vec<(Placement, json::ModuleItem)> = Vec::new();
-        match api
-            .get_all::<json::Module>(Endpoint::Modules { course: cid })
-            .await
-        {
-            Ok(listing) => {
+        let module_listing = if full {
+            Some(
+                api.get_all::<json::Module>(Endpoint::Modules { course: cid })
+                    .await,
+            )
+        } else {
+            None
+        };
+        let structure_read = matches!(
+            &module_listing,
+            Some(Ok(_) | Err(CanvasError::Forbidden | CanvasError::NotFound))
+        );
+        match module_listing {
+            None => modules_ok = false,
+            Some(Ok(listing)) => {
                 modules_ok &= self.check_listing(report, label, "modules", &listing);
                 let mut list = Vec::new();
                 for module in &listing.items {
@@ -559,7 +669,7 @@ impl<T: CanvasTransport> Syncer<'_, T> {
                 }
                 modules = Some(list);
             }
-            Err(err) => {
+            Some(Err(err)) => {
                 modules_ok = false;
                 self.soft(report, label, "modules", err)?;
             }
@@ -568,7 +678,9 @@ impl<T: CanvasTransport> Syncer<'_, T> {
         // ---- files (only when the Files tab is visible; module items still bring files) --------
         let mut files_ok = modules_ok;
         let mut files: HashMap<CanvasId, json::File> = HashMap::new();
-        if visible("files") {
+        if !full {
+            files_ok = false;
+        } else if visible("files") {
             match api
                 .get_all::<json::File>(Endpoint::Files { course: cid })
                 .await
@@ -593,7 +705,7 @@ impl<T: CanvasTransport> Syncer<'_, T> {
         // ---- pages ------------------------------------------------------------------------------
         let mut pages_ok = modules_ok;
         let mut pages: HashMap<String, json::Page> = HashMap::new(); // by slug
-        if visible("pages") {
+        if full && visible("pages") {
             match api
                 .get_all::<json::Page>(Endpoint::Pages { course: cid })
                 .await
@@ -619,23 +731,28 @@ impl<T: CanvasTransport> Syncer<'_, T> {
         }
 
         // ---- assignments → due dates only ----------------------------------------------------
-        let events = match api
-            .get_all::<json::Assignment>(Endpoint::Assignments { course: cid })
-            .await
-        {
-            Ok(listing) => {
-                let complete = self.check_listing(report, label, "assignments", &listing);
-                let events: Vec<Event> = listing
-                    .items
-                    .iter()
-                    .filter_map(|a| map::assignment(ids, &api.base, &course_id, a, self.now))
-                    .collect();
-                complete.then_some(events)
+        let events = if full {
+            match api
+                .get_all::<json::Assignment>(Endpoint::Assignments { course: cid })
+                .await
+            {
+                Ok(listing) => {
+                    let complete = self.check_listing(report, label, "assignments", &listing);
+                    let events: Vec<Event> = listing
+                        .items
+                        .iter()
+                        .filter_map(|a| map::assignment(ids, &api.base, &course_id, a, self.now))
+                        .collect();
+                    complete.then_some(events)
+                }
+                Err(err) => {
+                    self.soft(report, label, "assignments", err)?;
+                    None
+                }
             }
-            Err(err) => {
-                self.soft(report, label, "assignments", err)?;
-                None
-            }
+        } else {
+            // Not read: the course's assignment dates stay as the last full sync left them.
+            None
         };
 
         // ---- announcements of the window ----------------------------------------------------------
@@ -962,6 +1079,15 @@ impl<T: CanvasTransport> Syncer<'_, T> {
             with_store(self.db, move |store| {
                 store.in_transaction(|store| {
                     store.upsert_course(&upsert)?;
+                    if first_seen {
+                        // Its modules and materials aren't read by this run. That is recorded
+                        // with the course itself, so it holds whatever happens to the rest of
+                        // the run, until a full sync reads the course.
+                        let mut light = auto_sync::light_sync(store)?;
+                        if light.structure_pending.insert(course_id.clone()) {
+                            store.set_setting(auto_sync::LIGHT_SYNC_KEY, &light)?;
+                        }
+                    }
                     let module_ids: HashSet<String> = match &modules {
                         Some(modules) => {
                             store.replace_modules(&course_id, modules)?;
@@ -1163,6 +1289,8 @@ impl<T: CanvasTransport> Syncer<'_, T> {
             files_downloaded,
             files_indexed: files_indexed + indexed_html,
             events,
+            announcements_read: announcements_ok,
+            structure_read,
         })
     }
 }

@@ -273,6 +273,9 @@ pub(crate) struct Plannable {
     pub title: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
     pub name: Option<String>,
+    /// Of a graded quiz: the assignment that carries its due date.
+    #[serde(default, deserialize_with = "lenient")]
+    pub assignment_id: Option<CanvasId>,
 }
 
 #[cfg(test)]

@@ -57,6 +57,7 @@ export function WeekTab({
       <WeekView
         data={query.data}
         lifecycle={overview.lifecycle}
+        pending={overview.structure_pending}
         onSelectWeek={selectWeek}
         onSetTermDates={onSetTermDates}
         // Previous week's list stays visible (dimmed) while the next one loads.
@@ -78,12 +79,15 @@ export function WeekTab({
 function WeekView({
   data,
   lifecycle,
+  pending,
   onSelectWeek,
   onSetTermDates,
   stale,
 }: {
   data: WeekMaterials;
   lifecycle: CourseLifecycle;
+  /** No full sync has read this course's modules and materials yet: they are missing, not none. */
+  pending: boolean;
   onSelectWeek: (week: number | null) => void;
   onSetTermDates: () => void;
   stale: boolean;
@@ -143,7 +147,7 @@ function WeekView({
       {data.materials.length > 0 ? (
         <MaterialList materials={data.materials} aiMaterials={data.ai_materials} />
       ) : (
-        <EmptyWeek week={week} />
+        <EmptyWeek week={week} pending={pending} />
       )}
     </div>
   );
@@ -172,7 +176,7 @@ function ModuleList({ modules }: { modules: WeekMaterials["modules"] }) {
   );
 }
 
-function EmptyWeek({ week }: { week: number | null }) {
+function EmptyWeek({ week, pending }: { week: number | null; pending: boolean }) {
   const { t } = useTranslation("course");
   return (
     <Empty className="border">
@@ -180,10 +184,18 @@ function EmptyWeek({ week }: { week: number | null }) {
         <EmptyMedia variant="icon">
           <FolderOpen aria-hidden />
         </EmptyMedia>
+        {/* A course a light automatic sync found: nothing was looked for yet, so "none found"
+            would be wrong. */}
         <EmptyTitle>
-          {week !== null ? t("week.empty.title", { week }) : t("week.empty.titleRecent")}
+          {pending
+            ? t("week.pending.title")
+            : week !== null
+              ? t("week.empty.title", { week })
+              : t("week.empty.titleRecent")}
         </EmptyTitle>
-        <EmptyDescription>{t("week.empty.description")}</EmptyDescription>
+        <EmptyDescription>
+          {pending ? t("week.pending.description") : t("week.empty.description")}
+        </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
         <Button asChild variant="outline">

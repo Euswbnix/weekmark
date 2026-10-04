@@ -14,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useReturnFocus } from "@/lib/focus";
-import { useStartSync, useSyncStore } from "@/stores/sync";
+import { afterCurrentRun, useStartSync, useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
 import { AddSource } from "./add/AddSource";
 
@@ -44,13 +44,17 @@ export function AddSourceDialog({
 
   function added(records: SourceRecord[]) {
     onOpenChange(false);
-    if (useSyncStore.getState().running) {
-      // Only one sync at a time; the new source joins the next one.
+    const only = records.length === 1 ? records[0] : undefined;
+    const run = useSyncStore.getState();
+    if (run.running) {
+      // Only one sync at a time; the new source joins the next one. When the sync in the way is
+      // one PageLamp started by itself, "the next one" could be half a day off: sync the new
+      // source as soon as that run ends.
       toast.success(t("addDialog.doneLater"));
+      if (run.automatic) afterCurrentRun(() => void startSync(only?.id));
       return;
     }
     toast.success(t("addDialog.done"));
-    const only = records.length === 1 ? records[0] : undefined;
     void startSync(only?.id);
   }
 

@@ -529,6 +529,7 @@
 "chrome.accessory.dismiss" = "Dismiss";
 "chrome.accessory.open" = "Open Sources & sync";
 "chrome.accessory.syncingOf" = "Syncing %1$@ of %2$@ · %3$@";
+"chrome.accessory.syncingSource" = "Syncing · %1$@";
 "chrome.appearance.contrast" = "Increase contrast";
 "chrome.appearance.contrastHint" = "Darker text and borders, and no see-through glass.";
 "chrome.appearance.transparency" = "Reduce transparency";
@@ -780,6 +781,8 @@
 "course.download.viewingNotice" = "Downloading files through Canvas can count as viewing them (e.g. module 'must view' requirements).";
 "course.header.freshness" = "Data from %1$@ · synced %2$@";
 "course.header.freshnessNever" = "Data from %1$@ · not synced yet";
+"course.header.freshnessPending" = "Data from %1$@ · materials not read yet · deadlines and announcements checked %2$@";
+"course.header.freshnessWithDeadlines" = "Data from %1$@ · synced %2$@ · deadlines and announcements checked %3$@";
 "course.header.hidden" = "Hidden";
 "course.header.openWebsite" = "Open course website";
 "course.header.showInList" = "Show in course list";
@@ -845,6 +848,8 @@
 "course.week.note.no_current_week.upcoming" = "This course hasn't started yet, so it has no current week.";
 "course.week.note.no_materials_this_week" = "There are no modules or materials for this week.";
 "course.week.note.outside_term" = "Today is outside this course's term dates, so there's no current week.";
+"course.week.pending.description" = "PageLamp found this course while checking deadlines and announcements. Its modules and materials are read by the next full sync. To read them now, press Sync on Sources & sync.";
+"course.week.pending.title" = "This course's materials haven't been read yet";
 "course.week.previous" = "Previous week";
 "course.week.published" = "Published %1$@";
 "course.week.recent" = "Recent materials";
@@ -859,11 +864,13 @@
 "courses.card.next" = "Next: %1$@ · %2$@";
 "courses.card.noDeadlines" = "No upcoming deadlines";
 "courses.card.notSynced" = "%1$@ · not synced yet";
+"courses.card.pending" = "%1$@ · materials not read yet · deadlines checked %2$@";
 "courses.card.setPolicy" = "Set policy";
 "courses.card.setTerm" = "Set the term start to fix this";
 "courses.card.showInList" = "Show in course list";
 "courses.card.shownAgain" = "%1$@ is back in your course list";
 "courses.card.synced" = "%1$@ · synced %2$@";
+"courses.card.syncedAndDeadlines" = "%1$@ · synced %2$@ · deadlines checked %3$@";
 "courses.description" = "Where each course is this week, and what's coming up.";
 "courses.empty.addSource" = "Add a source";
 "courses.empty.description" = "Add a source so PageLamp can find your courses.";
@@ -1429,8 +1436,14 @@
 "sources.addErrors.token.invalid" = "That doesn't look like a Canvas access token. Copy it again from Canvas and paste it here.";
 "sources.addErrors.token.network" = "Couldn't reach Canvas. Check your internet connection and try again.";
 "sources.addErrors.token.not_found" = "Canvas can no longer be found at this source's address. Remove the source and add it again with the current address.";
+"sources.autoSync.hint" = "Runs only while PageLamp is open. When you open PageLamp or come back to it and the last full sync is as old as your choice above, it syncs everything, the same as pressing Sync; Canvas may record that as your activity in each course. In between, it only refreshes your course list, deadlines and announcements, without opening any course.";
+"sources.autoSync.label" = "Automatic sync";
+"sources.autoSync.option.daily" = "Once a day";
+"sources.autoSync.option.off" = "Off";
+"sources.autoSync.option.twice_daily" = "Twice a day";
 "sources.busy.checkAgain" = "Check again";
 "sources.busy.title" = "Another sync is running";
+"sources.canvasForm.autoSync" = "PageLamp syncs by itself while it's open. You can turn that off on Sources & sync.";
 "sources.canvasForm.httpWarning" = "Canvas addresses use https. Check that yours starts with https://.";
 "sources.canvasForm.missingToken" = "Paste your access token.";
 "sources.canvasForm.missingUrl" = "Enter your Canvas address.";
@@ -1445,6 +1458,7 @@
 "sources.canvasForm.urlLabel" = "Canvas address";
 "sources.canvasForm.urlPlaceholder" = "https://canvas.example.edu";
 "sources.card.canvasAddress" = "Canvas address";
+"sources.card.deadlinesChecked" = "Deadlines and announcements checked %1$@";
 "sources.card.feed" = "Feed address";
 "sources.card.feedPrivate" = "Private feed address (stored in your keychain)";
 "sources.card.folderPath" = "Folder";
@@ -1584,9 +1598,12 @@
 "updates.updated.body" = "Quit and reopen your AI app (Claude Desktop, Claude Code or Codex) so it uses the new PageLamp.";
 "updates.updated.dismiss" = "Dismiss";
 "updates.updated.title" = "PageLamp was updated to %1$@";
+"updates.whatsNew.autoSync" = "Sync automatically";
 "updates.whatsNew.done" = "Got it";
 "updates.whatsNew.since" = "Since version %1$@";
 "updates.whatsNew.title" = "What's new in PageLamp";
+"updates.whatsNew.topics.auto_sync.body" = "While PageLamp is open, it keeps your deadlines and announcements current by itself. When you open PageLamp or come back to it, it also refreshes your course materials, about twice a day, the same as pressing Sync. It never downloads Canvas files by itself. Canvas may record a full sync as your activity in each course. To change how often it syncs, or to turn it off, go to Sources & sync → Automatic sync.";
+"updates.whatsNew.topics.auto_sync.title" = "PageLamp now syncs by itself";
 "updates.whatsNew.topics.course_weeks.body" = "Each course shows its current week and phase, and finished courses move to “Past courses”.";
 "updates.whatsNew.topics.course_weeks.title" = "Weeks and phases for every course";
 "updates.whatsNew.topics.update_check.body" = "Once a day it downloads a small file from GitHub to see whether there's a new version. GitHub sees your IP address and your PageLamp version, as with any download; nothing about your courses is sent. It always asks before installing anything.";

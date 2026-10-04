@@ -79,7 +79,8 @@ function ReplaceSecretForm({ source, onDone }: { source: SourceRecord; onDone: (
           label: tc("actions.syncNow"),
           onClick: () =>
             void startSync(sourceId).then((ran) => {
-              if (!ran) toast.info(tc("sync.busy"));
+              // This window's own run is in the way (possibly one PageLamp started itself).
+              if (!ran) toast.info(tc("errors.busy"));
             }),
         },
       });

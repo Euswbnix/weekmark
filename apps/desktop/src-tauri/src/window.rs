@@ -29,10 +29,12 @@ impl Backdrop {
     }
 }
 
-/// Runs in the page before any of its scripts.
-pub fn init_script(backdrop: Backdrop) -> String {
+/// Runs in the page before any of its scripts. `hidden`: the window was started without being
+/// shown to the student (a login start), so the page must not take its launch for the student
+/// opening PageLamp (an automatic sync at such a start is never "attended").
+pub fn init_script(backdrop: Backdrop, hidden: bool) -> String {
     format!(
-        "window.__PAGELAMP_WINDOW__ = Object.freeze({{ backdrop: \"{}\" }});",
+        "window.__PAGELAMP_WINDOW__ = Object.freeze({{ backdrop: \"{}\", hidden: {hidden} }});",
         backdrop.name()
     )
 }
@@ -50,7 +52,8 @@ pub fn create_main<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     let builder = WebviewWindowBuilder::from_config(app.handle(), &config)?;
     let (builder, backdrop, os_build) = with_backdrop(builder);
     builder
-        .initialization_script(init_script(backdrop))
+        // This build has no hidden start: the window is always shown once the page has loaded.
+        .initialization_script(init_script(backdrop, false))
         // Also after a failed load (Finished comes anyway), so the window never stays hidden.
         .on_page_load(|window, payload| {
             if payload.event() == PageLoadEvent::Finished
@@ -107,10 +110,11 @@ mod tests {
     #[test]
     fn the_page_is_told_the_backdrop() {
         assert_eq!(
-            init_script(Backdrop::Mica),
-            r#"window.__PAGELAMP_WINDOW__ = Object.freeze({ backdrop: "mica" });"#
+            init_script(Backdrop::Mica, false),
+            r#"window.__PAGELAMP_WINDOW__ = Object.freeze({ backdrop: "mica", hidden: false });"#
         );
-        assert!(init_script(Backdrop::None).contains(r#"backdrop: "none""#));
+        assert!(init_script(Backdrop::None, false).contains(r#"backdrop: "none""#));
+        assert!(init_script(Backdrop::None, true).contains("hidden: true"));
     }
 
     fn shipped_config() -> serde_json::Value {

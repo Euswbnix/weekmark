@@ -148,6 +148,12 @@ pub(crate) async fn fetch_ical(feed_url: &str) -> Result<String, SourceError> {
                 "The calendar feed no longer exists. Copy a fresh feed URL and update it.",
             ));
         }
+        // The server is having trouble: it may pass by itself, like a network failure.
+        code @ 500..=599 => {
+            return Err(SourceError::network(format!(
+                "The calendar server answered HTTP {code}."
+            )));
+        }
         code => {
             return Err(SourceError::other(format!(
                 "The calendar server answered HTTP {code}."

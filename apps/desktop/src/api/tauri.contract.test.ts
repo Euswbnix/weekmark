@@ -41,6 +41,8 @@ it("sends the commands and arguments the Rust side expects", async () => {
   await api.updateSourceSecret(SOURCE, "contract-test-secret");
   await api.removeSource(SOURCE);
   await api.syncAll({}, onEvent);
+  await api.syncAll({ automatic: "unattended" }, onEvent);
+  await api.syncAll({ automatic: "attended" }, onEvent);
   await api.syncSource(SOURCE, { download_files: false }, onEvent);
   await api.downloadCourseFiles(COURSE, onEvent);
   await api.cancelSync();
@@ -106,6 +108,8 @@ it("sends the commands and arguments the Rust side expects", async () => {
   await api.logUiError("contract-test error without a stack", null);
   await api.updatePrefs();
   await api.setUpdatePrefs({ auto_check: true, channel: "beta" });
+  await api.syncPrefs();
+  await api.setSyncPrefs({ auto_sync: "daily" });
   await api.effectiveUpdateChannel();
   await api.startupTasks();
   await api.acknowledgeWhatsNew();

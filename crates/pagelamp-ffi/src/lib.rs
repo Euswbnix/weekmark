@@ -36,7 +36,7 @@ use std::sync::{Arc, LazyLock};
 use pagelamp_app::diagnostics::{CrashReport, DoctorReport, ProcessKind};
 use pagelamp_app::{
     Activity, App, AppError, AppStatus, LifecycleSummary, McpClientConfig, McpLaunch, Shell,
-    SourceSyncResult, StartupTasks, SyncEvent, SyncRequest, SyncSummary, UpdateChannel,
+    SourceSyncResult, StartupTasks, SyncEvent, SyncPrefs, SyncRequest, SyncSummary, UpdateChannel,
     UpdateCheckRecord, UpdatePrefs,
 };
 use pagelamp_core::lifecycle::SnoozeKind;
@@ -431,6 +431,19 @@ impl PageLamp {
     pub async fn set_update_prefs(&self, prefs: UpdatePrefs) -> Result<()> {
         let app = self.app.clone();
         blocking(move || app.set_update_prefs(prefs)).await
+    }
+
+    /// The student's sync settings: how often PageLamp syncs by itself while it runs (twice a
+    /// day unless chosen otherwise).
+    pub async fn sync_prefs(&self) -> Result<SyncPrefs> {
+        let app = self.app.clone();
+        blocking(move || app.sync_prefs()).await
+    }
+
+    /// Change them (also while What's new is waiting: its row carries the control).
+    pub async fn set_sync_prefs(&self, prefs: SyncPrefs) -> Result<()> {
+        let app = self.app.clone();
+        blocking(move || app.set_sync_prefs(prefs)).await
     }
 
     /// The student's channel, else Beta for a pre-release build and Stable otherwise.

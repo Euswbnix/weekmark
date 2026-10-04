@@ -99,7 +99,10 @@ async fn failures_keep_existing_events_and_never_leak_the_url() {
         (403, SourceErrorKind::AuthExpiredOrRevoked),
         (404, SourceErrorKind::NotFound),
         (410, SourceErrorKind::NotFound),
-        (500, SourceErrorKind::Other),
+        // A server having trouble may recover by itself: like a network failure.
+        (500, SourceErrorKind::Network),
+        (503, SourceErrorKind::Network),
+        (302, SourceErrorKind::Other),
     ] {
         let (_server, url) = serve(status, String::new()).await;
         let err = sync_ical(&db, SOURCE, &url, &no_progress)

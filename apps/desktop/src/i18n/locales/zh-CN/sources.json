@@ -14,6 +14,15 @@
     "replaceTokenFor": "更换访问令牌（{{label}}）",
     "replaceFeedFor": "更换日历订阅地址（{{label}}）"
   },
+  "autoSync": {
+    "label": "自动同步",
+    "option": {
+      "off": "关闭",
+      "daily": "每天一次",
+      "twice_daily": "每天两次"
+    },
+    "hint": "只有 {{product}} 开着的时候才会自动同步。你打开或切回 {{product}} 时，如果上次完整同步已经超过上面选的间隔，它会完整同步一次，和你点“同步”一样；Canvas 可能会把这记为你在各门课里的活动。其余时间它只刷新课程列表、截止日期和公告，不会打开任何一门课。"
+  },
   "list": {
     "loading": "正在加载数据来源…"
   },
@@ -32,7 +41,8 @@
     "termStart": "学期开始日期",
     "feed": "日历订阅地址",
     "feedPrivate": "私密的日历订阅地址（保存在系统钥匙串中）",
-    "lastSynced": "上次同步"
+    "lastSynced": "上次同步",
+    "deadlinesChecked": "{{when}}检查过截止日期和公告"
   },
   "status": {
     "label": "状态",
@@ -123,6 +133,7 @@
   "canvasForm": {
     "noticeTitle": "仅供本人使用",
     "shareHint": "想帮同学设置？请让他们使用“课程文件夹 + 日历订阅”方式。",
+    "autoSync": "只要 {{product}} 开着，它会自己同步。可以在“数据来源与同步”里关掉。",
     "urlLabel": "Canvas 地址",
     "urlPlaceholder": "https://canvas.example.edu",
     "urlHint": "就是你在浏览器里打开 Canvas 时的网址。只填网址本身，不要粘贴某门课的链接。",

@@ -28,6 +28,10 @@ const HEADLINE = {
  * finished" for 4 s, or a problem until it is dismissed (× or Esc) or the next run starts. A
  * click opens per-source progress. Screen readers hear the start, the end and a problem, not
  * every step.
+ *
+ * A sync PageLamp started by itself looks the same while it runs and when it finishes. When it
+ * goes wrong it just leaves (the store drops the run), unless the student is in the capsule or
+ * its details; and it never takes focus from the page.
  */
 export function AccessoryBar() {
   const { t } = useTranslation("chrome");
@@ -47,12 +51,19 @@ export function AccessoryBar() {
   // Pointer over it or focus in it: "Sync finished" waits (like when its details are open).
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
+  // The run this capsule is about was started by PageLamp itself, and whether the student has
+  // been in the capsule or its details since it appeared.
+  const automaticRun = useRef(false);
+  const touched = useRef(false);
 
   // A run starting or ending decides what the capsule says afterwards; a stopped run leaves.
   useEffect(() => {
     if (running === wasRunning.current) return;
     wasRunning.current = running;
     if (running) {
+      automaticRun.current = useSyncStore.getState().automatic !== null;
+      // Still in the capsule of the run before: that counts as being in this one too.
+      touched.current = useSyncStore.getState().watched;
       setEnding(null);
       setAnnouncement(tc("sync.syncing"));
       return;
@@ -60,8 +71,18 @@ export function AccessoryBar() {
     const next =
       outcome === "done" || outcome === "doneWithErrors" || outcome === "failed" ? outcome : null;
     setEnding(next);
-    // A stopped run leaves quietly on screen, but screen readers hear that it stopped.
-    setAnnouncement(next ? tc(HEADLINE[next]) : outcome === "stopped" ? tc("sync.stopped") : "");
+    // A stopped run leaves quietly on screen, but screen readers hear that it stopped. So does an
+    // automatic run that found something only the student can fix: the pill now says "Needs
+    // attention", and the pill isn't a live region.
+    setAnnouncement(
+      next
+        ? tc(HEADLINE[next])
+        : outcome === "stopped"
+          ? tc("sync.stopped")
+          : useSyncStore.getState().automaticProblem
+            ? tc("sync.doneWithErrors")
+            : "",
+    );
   }, [running, outcome, tc]);
 
   // "Sync finished" leaves after 4 s, unless its details are open or the student is on it.
@@ -73,6 +94,13 @@ export function AccessoryBar() {
 
   const capsule: Capsule | null = running ? { kind: "running" } : ending ? { kind: ending } : null;
   const attention = capsule?.kind === "doneWithErrors" || capsule?.kind === "failed";
+
+  // The store keeps an automatic run's problem on screen only while the student is here.
+  const watched = capsule !== null && (open || focused);
+  useEffect(() => {
+    useSyncStore.setState({ watched });
+    if (watched) touched.current = true;
+  }, [watched]);
 
   // Esc dismisses a problem (§6.2), unless a dialog or popover takes it first.
   useEffect(() => {
@@ -86,14 +114,12 @@ export function AccessoryBar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [attention, open]);
 
-  // While it fades out the capsule keeps saying what it said last.
-  const shown = useRef<Capsule>({ kind: "done" });
-  if (capsule) shown.current = capsule;
   const visible = capsule !== null;
 
   // When it leaves (timed out, ×, Esc, a run stopped from its details), focus that was in it
   // or in its details (or already fell to <body> as it went inert) goes to the page, not to
-  // the top of the window.
+  // the top of the window. After a sync the student didn't start, only if they were in it:
+  // focus resting on <body> stays where it is.
   const visibleRef = useRef(visible);
   const stranded = useCallback((active: Element | null) => {
     return (
@@ -107,19 +133,42 @@ export function AccessoryBar() {
     const was = visibleRef.current;
     visibleRef.current = visible;
     if (was && !visible) {
-      if (stranded(document.activeElement)) focusPage();
+      if (stranded(document.activeElement) && (touched.current || !automaticRun.current)) {
+        focusPage();
+      }
       setHovered(false);
       setFocused(false);
+      // Its details go with it. Left "open", they would open by themselves with the next run's
+      // capsule and take the focus, also for a sync the student didn't start.
+      setOpen(false);
     }
   }, [visible, stranded]);
-  const text =
-    shown.current.kind === "running"
-      ? total && current
-        ? t("accessory.syncingOf", { done, total, source: current.label })
-        : total
-          ? tc("sync.syncingProgress", { done, total })
-          : tc("sync.syncing")
-      : tc(HEADLINE[shown.current.kind]);
+  // While it fades out the capsule keeps what it showed last: by then the store may hold no run
+  // at all (an automatic sync that went wrong), and the text must not fall back to "Syncing…".
+  const shown = useRef<{ capsule: Capsule; text: string; done: number; total: number | null }>({
+    capsule: { kind: "done" },
+    text: "",
+    done: 0,
+    total: null,
+  });
+  if (capsule) {
+    shown.current = {
+      capsule,
+      text:
+        capsule.kind === "running"
+          ? total && current
+            ? t("accessory.syncingOf", { done, total, source: current.label })
+            : total
+              ? tc("sync.syncingProgress", { done, total })
+              : current
+                ? t("accessory.syncingSource", { source: current.label })
+                : tc("sync.syncing")
+          : tc(HEADLINE[capsule.kind]),
+      done,
+      total,
+    };
+  }
+  const { text } = shown.current;
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-4">
@@ -145,7 +194,11 @@ export function AccessoryBar() {
               type="button"
               className="flex h-7 min-w-0 items-center gap-2 rounded-full px-3 outline-hidden hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <CapsuleIcon capsule={shown.current} done={done} total={total} />
+              <CapsuleIcon
+                capsule={shown.current.capsule}
+                done={shown.current.done}
+                total={shown.current.total}
+              />
               <span className="truncate">{text}</span>
             </button>
           </PopoverTrigger>

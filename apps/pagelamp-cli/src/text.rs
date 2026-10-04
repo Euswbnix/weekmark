@@ -37,3 +37,13 @@ pub const CANVAS_DOWNLOAD_NOTICE: &str = "Downloading files through Canvas can c
 pub fn try_prompt() -> String {
     format!("Try: \"Using {PRODUCT_NAME}, where is each of my courses this week?\"")
 }
+
+/// The automatic sync setting in words (`status`, `sync --auto`).
+pub fn auto_sync(setting: pagelamp_core::auto_sync::AutoSync) -> &'static str {
+    use pagelamp_core::auto_sync::AutoSync;
+    match setting {
+        AutoSync::Off => "off (PageLamp syncs only when you start a sync)",
+        AutoSync::Daily => "once a day, while the PageLamp app is open",
+        AutoSync::TwiceDaily => "twice a day, while the PageLamp app is open",
+    }
+}

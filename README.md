@@ -171,6 +171,14 @@ instructors can see) may list each area PageLamp reads — modules, pages, assig
 announcements — plus each page it reads (only new or changed ones). Reading doesn't complete module
 requirements; downloading files can.
 
+(v0.3) While the PageLamp app is running it also syncs by itself, twice a day unless you choose
+once a day or off. With nobody at the app it checks your token and asks Canvas only for your
+course list (with each course's syllabus), your deadlines and your courses' announcements; it
+makes no request for a course's modules, pages, file list or assignments. The full sync described
+above runs when you start a sync, or when you open PageLamp or bring it to the front and the last
+full sync is old enough (or a newly found course hasn't been read yet). An automatic sync never
+downloads files.
+
 ### Course AI policies
 
 Many universities don't allow generative AI in a course unless the instructor permits it — check
@@ -233,7 +241,9 @@ pagelamp mcp  ──reads──▶  pagelamp.db (on your computer)  ◀──wri
 
 `pagelamp mcp` never connects to Canvas or the internet: it reads the database on your computer
 and writes to it only when your AI app asks it to save something for you (in v0.1, a study plan).
-Syncing is a separate step you start (with your own token for Canvas).
+Syncing is a separate step (with your own token for Canvas): you start it, or (v0.3) the PageLamp
+app does while it runs, under your setting. The MCP server gives your AI app no way to start a
+sync and tells it not to run one for you.
 
 - `crates/` — Rust core: data model and SQLite store, text extraction, Canvas / folder / iCal
   sources, the MCP server, the shared layer the command-line tool and apps call, and model access
@@ -299,7 +309,10 @@ Linux 请用 `.deb`/`.rpm`（会同时安装 `/usr/bin/pagelamp`）；`.AppImage
 
 
 同步时 Canvas 会像记录其他访问一样记录下来：课程访问报告（老师能看到）里可能出现 PageLamp 读取的模块、页面、作业、文件和公告列表，以及它读取的每个页面（只读新增或有变化的页面）。读取页面不会完成模块要求；下载文件可能会，所以默认不下载。
-PageLamp 的 MCP 服务从不连接 Canvas 或互联网：它读取你电脑上的数据库，只在你的 AI 应用请求保存内容时写入（v0.1 中只有学习计划）；Canvas 同步是你用自己的令牌单独执行的一步。
+
+（v0.3）PageLamp 应用运行期间也会自己同步，默认每天两次，可以改成每天一次或关闭。你不在应用前时，它先验证令牌，然后只向 Canvas 请求你的课程列表（含每门课的教学大纲）、截止日期和各门课的公告，不请求任何课程的模块、页面、文件列表或作业。上面说的完整同步在你发起同步时进行，或者在你打开 PageLamp、把它切到前台，而上次完整同步已经够久（或有新发现的课程还没读过）时进行。自动同步从不下载文件。
+
+PageLamp 的 MCP 服务从不连接 Canvas 或互联网：它读取你电脑上的数据库，只在你的 AI 应用请求保存内容时写入（v0.1 中只有学习计划）；同步是单独的一步，用的是你自己的 Canvas 令牌：由你发起，或者（v0.3）由运行中的 PageLamp 应用按你的设置发起。MCP 服务不给你的 AI 应用任何发起同步的途径，并告诉它不要替你同步。
 
 **隐私**：数据只存在你的电脑上；只有你向 AI 提问时，AI 读取的课程内容才会发到你自己的 AI 账号。v0.1 的 PageLamp 自己不调用任何 AI 模型；它从不转售或代付 AI 用量，也从不读取、保存或发送你登录 AI 账号所用的凭据（密码或令牌）。详见 [PRIVACY.md](PRIVACY.md)。
 

@@ -24,6 +24,7 @@
 pub mod ai;
 pub mod ai_gate;
 pub mod ai_rules;
+pub mod auto_sync;
 pub mod brand;
 pub mod calendar;
 pub mod dates;

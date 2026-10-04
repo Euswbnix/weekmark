@@ -11,6 +11,8 @@
     "statusLabel": "Course status",
     "freshness": "Data from {{source}} · synced {{when}}",
     "freshnessNever": "Data from {{source}} · not synced yet",
+    "freshnessWithDeadlines": "Data from {{source}} · synced {{when}} · deadlines and announcements checked {{deadlines}}",
+    "freshnessPending": "Data from {{source}} · materials not read yet · deadlines and announcements checked {{when}}",
     "syncing": "Syncing now…",
     "openWebsite": "Open course website",
     "hidden": "Hidden",
@@ -54,6 +56,10 @@
       "titleRecent": "No recent materials",
       "description": "Materials show up here after a sync when they're in a module or folder for that week.",
       "action": "Open Sources & sync"
+    },
+    "pending": {
+      "title": "This course's materials haven't been read yet",
+      "description": "{{product}} found this course while checking deadlines and announcements. Its modules and materials are read by the next full sync. To read them now, press Sync on Sources & sync."
     },
     "announcements": {
       "title": "Recent announcements",

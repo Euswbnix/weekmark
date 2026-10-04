@@ -41,6 +41,15 @@ export type MockScenario =
   | "error"
   | "busy"
   | "crashed"
+  // The sources were last synced 13 hours ago: an automatic sync is due.
+  | "auto-sync-due"
+  // The same, and an hour ago an automatic sync with nobody at the app read Canvas lightly:
+  // its deadlines are current, and it found a course whose materials haven't been read yet.
+  // Automatic sync is off here, so the state stays to be looked at.
+  | "light-synced"
+  // The folder and the feed synced 2 hours ago, Canvas 5 days ago, and nothing is wrong: the
+  // student syncs one source at a time by hand (automatic sync is off here).
+  | "canvas-old"
   // Updates (M0.4): an update is offered / an upgrader from 0.1 sees "What's new" / the first
   // launch after an update / a deb or rpm install (download link only).
   | "update-available"
@@ -88,6 +97,9 @@ export const MOCK_SCENARIOS: readonly MockScenario[] = [
   "error",
   "busy",
   "crashed",
+  "auto-sync-due",
+  "light-synced",
+  "canvas-old",
   "update-available",
   "upgrader",
   "upgrader-from-01",
@@ -141,11 +153,18 @@ export interface MockCourse {
   materials: MaterialView[];
   announcements: MaterialView[];
   deadlines: Deadline[];
+  /** A light automatic sync found it; no full sync has read its modules and materials yet. */
+  structurePending?: boolean;
 }
 
 export interface MockDb {
   dataDir: string;
   sources: SourceRecord[];
+  /**
+   * Per source id: when a light automatic sync last read its deadlines and announcements, if
+   * that was after its last full sync (`last_synced_at`).
+   */
+  deadlinesSyncedAt: Record<string, string>;
   courses: MockCourse[];
   studyPlan: StoredStudyPlan | null;
   /** Simulates another process (the CLI) holding sync.lock. */
@@ -184,7 +203,8 @@ export const SOURCE_ICAL = "ical:demo-calendar";
 export const SOURCE_CANVAS = "canvas:canvas.demo.test";
 
 function sources(now: Date, scenario: MockScenario): SourceRecord[] {
-  const ok = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
+  const hours = scenario === "auto-sync-due" || scenario === "light-synced" ? 13 : 2;
+  const ok = new Date(now.getTime() - hours * 60 * 60 * 1000).toISOString();
   const failed = (kind: SourceErrorKind, message: string) => ({
     last_error: message,
     last_error_kind: kind,
@@ -214,7 +234,12 @@ function sources(now: Date, scenario: MockScenario): SourceRecord[] {
       kind: "canvas",
       label: "Demo Canvas",
       config: { base_url: "https://canvas.demo.test", account_name: "Demo Student" },
-      last_synced_at: scenario === "expired" ? at(now, -9, 18) : ok,
+      last_synced_at:
+        scenario === "expired"
+          ? at(now, -9, 18)
+          : scenario === "canvas-old"
+            ? new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString()
+            : ok,
       ...(scenario === "expired"
         ? failed(
             "auth_expired_or_revoked",
@@ -670,6 +695,38 @@ function demo099(now: Date): MockCourse {
   });
 }
 
+/** A course Canvas listed since the last full sync: deadlines only, nothing else read yet. */
+function demo404(now: Date): MockCourse {
+  const spec: CourseSpec = {
+    id: `${SOURCE_CANVAS}/course/404`,
+    sourceId: SOURCE_CANVAS,
+    code: "DEMO404",
+    name: "Demo Seminar",
+    policy: "unknown",
+    policyNote: null,
+    hidden: false,
+    materialSharing: "not_sure",
+    termStartDays: null,
+    week: null,
+    confidence: "low",
+    evidence: ["Its modules and materials haven't been read yet"],
+    url: "https://canvas.demo.test/courses/404",
+  };
+  const c = course(spec, now);
+  return {
+    ...mockCourse({
+      course: c,
+      timeline: timeline(spec, now, []),
+      lifecycle: lifecycle({ state: "unknown", confidence: "low", last_activity: null }),
+      modules: [],
+      materials: [],
+      announcements: [],
+      deadlines: [deadline(c, "Seminar proposal", "assignment_due", 6, now, 17, 0)],
+    }),
+    structurePending: true,
+  };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Study plan (as if the student's AI app saved it via MCP `save_study_plan`)
 // ---------------------------------------------------------------------------------------------
@@ -833,6 +890,7 @@ export function buildMockDb(now: Date, scenario: MockScenario): MockDb {
     return {
       dataDir,
       sources: [],
+      deadlinesSyncedAt: {},
       courses: [],
       studyPlan: null,
       externalSyncRunning: false,
@@ -840,9 +898,14 @@ export function buildMockDb(now: Date, scenario: MockScenario): MockDb {
     };
   }
   const courses = [demo101(now), demo205(now), demo310(now), demo099(now)];
+  const light = scenario === "light-synced";
+  if (light) courses.push(demo404(now));
   return {
     dataDir,
     sources: sources(now, scenario),
+    deadlinesSyncedAt: light
+      ? { [SOURCE_CANVAS]: new Date(now.getTime() - 60 * 60 * 1000).toISOString() }
+      : {},
     courses,
     studyPlan: studyPlan(now, courses),
     externalSyncRunning: scenario === "busy",

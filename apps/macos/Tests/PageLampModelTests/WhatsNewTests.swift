@@ -18,7 +18,10 @@ private struct StartupAnswer: ForwardingService {
 }
 
 private func tasks(_ whatsNew: WhatsNew?) -> StartupTasks {
-    StartupTasks(whatsNew: whatsNew, updateCheckDue: false, updatedFrom: whatsNew?.since)
+    StartupTasks(
+        whatsNew: whatsNew, updateCheckDue: false, updatedFrom: whatsNew?.since,
+        syncDue: SyncDue(unattended: false, attended: false)
+    )
 }
 
 @Suite("What's new") @MainActor

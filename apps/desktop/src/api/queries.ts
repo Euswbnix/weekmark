@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useApi } from "./context";
-import type { AiPolicy, IsoDate, StartupTasks, UpdatePrefs } from "./types";
+import type { AiPolicy, IsoDate, StartupTasks, SyncPrefs, UpdatePrefs } from "./types";
 
 export const queryKeys = {
   all: ["pagelamp"] as const,
@@ -24,6 +24,7 @@ export const queryKeys = {
   // text the student is reviewing before they copy it.
   diagnosticReport: () => ["diagnostic-report"] as const,
   updatePrefs: () => [...queryKeys.all, "update-prefs"] as const,
+  syncPrefs: () => [...queryKeys.all, "sync-prefs"] as const,
   updateChannel: () => [...queryKeys.all, "update-channel"] as const,
   lastUpdateCheck: () => [...queryKeys.all, "last-update-check"] as const,
   // Once per launch, outside `all`: a sync finishing must not bring back "What's new" or start
@@ -327,6 +328,31 @@ export function useSetUpdatePrefs() {
         client.invalidateQueries({ queryKey: queryKeys.updatePrefs() }),
         client.invalidateQueries({ queryKey: queryKeys.updateChannel() }),
       ]),
+  });
+}
+
+/** How often PageLamp syncs by itself (Sources & sync, and the What's new row). */
+export function useSyncPrefs() {
+  const api = useApi();
+  return useQuery({ queryKey: queryKeys.syncPrefs(), queryFn: () => api.syncPrefs() });
+}
+
+/**
+ * Saves the choice and asks the facade again what is due, so turning automatic sync on can start
+ * a due sync at once instead of up to an hour later. The status carries the setting too.
+ */
+export function useSetSyncPrefs() {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (prefs: SyncPrefs) => api.setSyncPrefs(prefs),
+    onSuccess: (_, prefs) => {
+      client.setQueryData(queryKeys.syncPrefs(), prefs);
+      return Promise.all([
+        client.invalidateQueries({ queryKey: queryKeys.status() }),
+        client.invalidateQueries({ queryKey: queryKeys.startupTasks() }),
+      ]);
+    },
   });
 }
 

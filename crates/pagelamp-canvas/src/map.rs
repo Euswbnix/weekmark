@@ -371,6 +371,72 @@ pub(crate) fn planner_item(
     })
 }
 
+/// An assignment, graded quiz or graded discussion on the planner → its due date, as the
+/// event the assignments endpoint gives (the same id, so a full sync replaces it). For a sync
+/// that doesn't read a course's assignments. The planner names a graded quiz or discussion by
+/// its own id; the id of its assignment is in the plannable. Items of courses outside
+/// `course_id` are skipped.
+///
+/// The link is built here, never taken from the item: for work the student handed in, the
+/// planner links to their submission.
+///
+/// `known_only`: a graded discussion's planner date is its due date only when it has one (the
+/// planner falls back to the day it was posted), so it may move an event a full sync made but
+/// must not make a new one.
+pub(crate) fn planner_due_date(
+    ids: Ids<'_>,
+    base: &Url,
+    item: &json::PlannerItem,
+    course_id: impl Fn(&CanvasId) -> Option<String>,
+    now: DateTime<Utc>,
+) -> Option<PlannerDueDate> {
+    let plannable = item.plannable.as_ref();
+    let (assignment, kind, known_only) = match item.plannable_type.as_deref()? {
+        "assignment" => (item.plannable_id.as_ref()?, EventKind::AssignmentDue, false),
+        "quiz" => (
+            plannable?.assignment_id.as_ref()?,
+            EventKind::QuizDue,
+            false,
+        ),
+        "discussion_topic" => (
+            plannable?.assignment_id.as_ref()?,
+            EventKind::AssignmentDue,
+            true,
+        ),
+        _ => return None,
+    };
+    let due_at = item.plannable_date?;
+    let canvas_course = item.course_id.as_ref()?;
+    let course = course_id(canvas_course)?;
+    let event = Event {
+        id: format!("{}/assignment/{assignment}", ids.source),
+        source_id: ids.source.to_string(),
+        course_id: Some(course),
+        kind,
+        title: plannable
+            .and_then(|p| p.title.clone().or_else(|| p.name.clone()))
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| format!("Assignment {assignment}")),
+        starts_at: None,
+        ends_at: None,
+        due_at: Some(due_at),
+        url: Some(canvas_url(
+            base,
+            &["courses", &canvas_course.0, "assignments", &assignment.0],
+        )),
+        updated_at: now,
+        course_hint: None,
+    };
+    Some(PlannerDueDate { event, known_only })
+}
+
+/// `planner_due_date`'s answer.
+pub(crate) struct PlannerDueDate {
+    pub event: Event,
+    /// Use it only to move an event that already exists.
+    pub known_only: bool,
+}
+
 /// LMS HTML → plain text (for the course's syllabus_text field).
 pub(crate) fn html_to_text(html: &str) -> String {
     pagelamp_extract::extract_html(html)
@@ -594,6 +660,76 @@ mod tests {
             "plannable_date": "2026-10-01T12:00:00Z"}),
         );
         assert!(planner_item(ids(), &base(), &other_course, map, now).is_none());
+    }
+
+    #[test]
+    fn planner_due_dates_use_the_assignment_id() {
+        let now = Utc::now();
+        let map = |id: &CanvasId| (id.0 == "101").then(|| "ours/101".to_string());
+        let item = |value: serde_json::Value| -> json::PlannerItem { from(value) };
+        let due =
+            |value: serde_json::Value| planner_due_date(ids(), &base(), &item(value), map, now);
+
+        // Handed in already: the planner links to the student's submission. The stored link
+        // is the assignment's.
+        let found = due(json!({"plannable_id": 9, "plannable_type": "assignment",
+            "course_id": 101, "plannable_date": "2026-10-01T12:00:00Z",
+            "plannable": {"title": "Problem Set 1"},
+            "html_url": "/courses/101/assignments/9/submissions/77"}))
+        .unwrap();
+        assert!(!found.known_only);
+        let event = found.event;
+        assert_eq!(event.id, "canvas:lms.example.edu/assignment/9");
+        assert_eq!(event.kind, EventKind::AssignmentDue);
+        assert_eq!(event.title, "Problem Set 1");
+        assert_eq!(event.course_id.as_deref(), Some("ours/101"));
+        assert_eq!(
+            event.url.as_deref(),
+            Some("https://lms.example.edu/courses/101/assignments/9")
+        );
+
+        // A graded quiz: named by its quiz id, stored under its assignment's id and link.
+        let quiz = due(
+            json!({"plannable_id": 44, "plannable_type": "quiz", "course_id": 101,
+            "plannable_date": "2026-10-02T12:00:00Z", "html_url": "/courses/101/quizzes/44",
+            "plannable": {"title": "Quiz 2", "assignment_id": 12}}),
+        )
+        .unwrap();
+        assert!(!quiz.known_only);
+        assert_eq!(quiz.event.id, "canvas:lms.example.edu/assignment/12");
+        assert_eq!(quiz.event.kind, EventKind::QuizDue);
+        assert_eq!(
+            quiz.event.url.as_deref(),
+            Some("https://lms.example.edu/courses/101/assignments/12")
+        );
+
+        // A graded discussion may only move the event a full sync made.
+        let discussion = due(
+            json!({"plannable_id": 51, "plannable_type": "discussion_topic", "course_id": 101,
+            "plannable_date": "2026-10-03T12:00:00Z",
+            "plannable": {"title": "Week 3 discussion", "assignment_id": 13}}),
+        )
+        .unwrap();
+        assert!(discussion.known_only);
+        assert_eq!(discussion.event.id, "canvas:lms.example.edu/assignment/13");
+
+        // A practice quiz and a discussion that isn't graded have no assignment; other types,
+        // other courses and items with no course or date give nothing.
+        for nothing in [
+            json!({"plannable_id": 45, "plannable_type": "quiz", "course_id": 101,
+                   "plannable_date": "2026-10-02T12:00:00Z", "plannable": {"title": "Practice"}}),
+            json!({"plannable_id": 52, "plannable_type": "discussion_topic", "course_id": 101,
+                   "plannable_date": "2026-10-01T12:00:00Z", "plannable": {"title": "Chat"}}),
+            json!({"plannable_id": 1, "plannable_type": "planner_note",
+                   "plannable_date": "2026-10-01T12:00:00Z"}),
+            json!({"plannable_id": 9, "plannable_type": "assignment", "course_id": 999,
+                   "plannable_date": "2026-10-01T12:00:00Z"}),
+            json!({"plannable_id": 9, "plannable_type": "assignment",
+                   "plannable_date": "2026-10-01T12:00:00Z"}),
+            json!({"plannable_id": 9, "plannable_type": "assignment", "course_id": 101}),
+        ] {
+            assert!(due(nothing.clone()).is_none(), "{nothing}");
+        }
     }
 
     #[test]

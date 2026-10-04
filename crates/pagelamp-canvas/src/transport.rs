@@ -17,9 +17,13 @@
 //!   request only: method, path + allow-listed query parameters, status, remaining rate-limit
 //!   quota and elapsed time, plus Canvas's `errors[].message` on failures. Never headers, the
 //!   token, signed download URLs (file storage hops show the host only), or response bodies.
-//! - At most 2 requests at a time; exponential backoff on throttling (429, or 403 "Rate Limit
-//!   Exceeded"): 1s, 2s, 4s, 8s → `RateLimited` after 5 tries; slowing down when
-//!   `X-Rate-Limit-Remaining` drops below 100.
+//! - At most 2 requests at a time (1 in an automatic sync, which nobody is waiting for);
+//!   exponential backoff on throttling (429, or 403 "Rate Limit Exceeded"): 1s, 2s, 4s, 8s,
+//!   or as long as `Retry-After` asks → `RateLimited` after 5 tries, or at once when
+//!   `Retry-After` asks for more than a minute; slowing down when `X-Rate-Limit-Remaining`
+//!   drops below 100.
+//! - The User-Agent names the product, the version and "read-only"; an automatic sync adds
+//!   "automatic sync", so a school's administrator can tell the two apart.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -115,6 +119,8 @@ pub(crate) trait CanvasTransport: Send + Sync {
 pub(crate) struct RetryPolicy {
     pub base_delay: Duration,
     pub max_tries: u32,
+    /// The longest wait a `Retry-After` header can ask for.
+    pub max_retry_after: Duration,
 }
 
 impl Default for RetryPolicy {
@@ -122,6 +128,7 @@ impl Default for RetryPolicy {
         RetryPolicy {
             base_delay: Duration::from_secs(1),
             max_tries: 5,
+            max_retry_after: Duration::from_secs(60),
         }
     }
 }
@@ -152,7 +159,14 @@ struct Fetched {
 }
 
 impl TokenTransport {
-    pub(crate) fn new(base: Url, token: &str, retry: RetryPolicy) -> Result<Self, CanvasError> {
+    /// `automatic`: a sync PageLamp started by itself (one request at a time, and said so in
+    /// the User-Agent).
+    pub(crate) fn new(
+        base: Url,
+        token: &str,
+        retry: RetryPolicy,
+        automatic: bool,
+    ) -> Result<Self, CanvasError> {
         let mut auth =
             HeaderValue::from_str(&format!("Bearer {}", token.trim())).map_err(|_| {
                 CanvasError::BadResponse("the token contains invalid characters".into())
@@ -165,18 +179,14 @@ impl TokenTransport {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(30))
             .read_timeout(Duration::from_secs(60))
-            .user_agent(format!(
-                "{}/{} (read-only)",
-                pagelamp_core::brand::PRODUCT_NAME,
-                env!("CARGO_PKG_VERSION")
-            ))
+            .user_agent(user_agent(automatic))
             .build()
             .map_err(network_error)?;
         Ok(TokenTransport {
             client,
             base,
             auth,
-            permits: Semaphore::new(2),
+            permits: Semaphore::new(if automatic { 1 } else { 2 }),
             retry,
             requests: AtomicU64::new(0),
         })
@@ -236,7 +246,16 @@ impl TokenTransport {
                 return Ok(fetched);
             }
             if attempt < self.retry.max_tries {
-                tokio::time::sleep(delay).await;
+                // As long as Canvas asks, when it says (and never less than our own backoff).
+                // When it asks for longer than we wait inside a sync, the sync ends as
+                // throttled at once: the wait here couldn't be stopped, and whoever started
+                // the sync (the student, or the automatic sync's own wait) decides when to
+                // try again.
+                let asked = retry_after(&fetched.headers);
+                if asked.is_some_and(|asked| asked > self.retry.max_retry_after) {
+                    return Err(CanvasError::RateLimited);
+                }
+                tokio::time::sleep(asked.map_or(delay, |asked| asked.max(delay))).await;
                 delay *= 2;
             }
         }
@@ -552,6 +571,34 @@ pub(crate) fn canvas_error_messages(body: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// "PageLamp/0.3.0 (read-only)", or "(read-only; automatic sync)" for a sync PageLamp started
+/// by itself.
+pub(crate) fn user_agent(automatic: bool) -> String {
+    format!(
+        "{}/{} ({})",
+        pagelamp_core::brand::PRODUCT_NAME,
+        env!("CARGO_PKG_VERSION"),
+        if automatic {
+            "read-only; automatic sync"
+        } else {
+            "read-only"
+        }
+    )
+}
+
+/// The seconds a `Retry-After` header asks for (the HTTP-date form is not used by Canvas and
+/// is ignored).
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
+}
+
 /// 429, or 403 whose body says "Rate Limit Exceeded" (Canvas's throttling response).
 fn is_throttled(fetched: &Fetched) -> bool {
     fetched.status == StatusCode::TOO_MANY_REQUESTS
@@ -603,4 +650,45 @@ fn allowed_download_url(url: &Url, base: &Url) -> bool {
 /// reqwest errors without the URL (URLs can carry signed download parameters).
 fn network_error(err: reqwest::Error) -> CanvasError {
     CanvasError::Network(err.without_url().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_automatic_sync_sends_one_request_at_a_time_and_says_what_it_is() {
+        let base = Url::parse("https://lms.example.edu").unwrap();
+        let transport = |automatic| {
+            TokenTransport::new(
+                base.clone(),
+                "demo-token",
+                RetryPolicy::default(),
+                automatic,
+            )
+            .unwrap_or_else(|_| panic!("a transport"))
+        };
+        assert_eq!(transport(false).permits.available_permits(), 2);
+        assert_eq!(transport(true).permits.available_permits(), 1);
+        let version = env!("CARGO_PKG_VERSION");
+        assert_eq!(user_agent(false), format!("PageLamp/{version} (read-only)"));
+        assert_eq!(
+            user_agent(true),
+            format!("PageLamp/{version} (read-only; automatic sync)")
+        );
+    }
+
+    #[test]
+    fn retry_after_reads_seconds_only() {
+        let with = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(reqwest::header::RETRY_AFTER, value.parse().unwrap());
+            retry_after(&headers)
+        };
+        assert_eq!(with("30"), Some(Duration::from_secs(30)));
+        assert_eq!(with(" 5 "), Some(Duration::from_secs(5)));
+        assert_eq!(with("Wed, 21 Oct 2026 07:28:00 GMT"), None);
+        assert_eq!(with("-1"), None);
+        assert_eq!(retry_after(&HeaderMap::new()), None);
+    }
 }

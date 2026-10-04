@@ -54,6 +54,7 @@ import type {
   StoredStudyPlan,
   SyllabusOffer,
   SyncEvent,
+  SyncPrefs,
   SyncRequest,
   SyncSummary,
   UpdateChannel,
@@ -320,6 +321,9 @@ export interface PageLampApi {
   // ----- updates (facade: preferences, what's due now, the last check) ---------------------
   updatePrefs(): Promise<UpdatePrefs>;
   setUpdatePrefs(prefs: UpdatePrefs): Promise<void>;
+  /** How often PageLamp syncs by itself while it's open (off, once or twice a day). */
+  syncPrefs(): Promise<SyncPrefs>;
+  setSyncPrefs(prefs: SyncPrefs): Promise<void>;
   /** The chosen channel, else beta for a pre-release build, else stable (decision D3). */
   effectiveUpdateChannel(): Promise<UpdateChannel>;
   /** What to do at launch: the "What's new" sheet, an automatic check, the post-update banner. */
@@ -348,6 +352,11 @@ export interface PageLampApi {
    * plan in their AI app. Returns a function that stops listening.
    */
   onWindowFocus(onFocus: () => void): () => void;
+  /**
+   * The window was started without being shown to the student (a start at login). Its launch
+   * then isn't the student opening PageLamp; the first time the window gains focus is.
+   */
+  startedHidden(): boolean;
   /** Show the folder with PageLamp's log files in Finder / Explorer. */
   revealLogsDir(): Promise<void>;
   /**

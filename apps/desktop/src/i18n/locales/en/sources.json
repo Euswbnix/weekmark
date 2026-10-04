@@ -14,6 +14,15 @@
     "replaceTokenFor": "Replace token for {{label}}",
     "replaceFeedFor": "Replace feed address for {{label}}"
   },
+  "autoSync": {
+    "label": "Automatic sync",
+    "option": {
+      "off": "Off",
+      "daily": "Once a day",
+      "twice_daily": "Twice a day"
+    },
+    "hint": "Runs only while {{product}} is open. When you open {{product}} or come back to it and the last full sync is as old as your choice above, it syncs everything, the same as pressing Sync; Canvas may record that as your activity in each course. In between, it only refreshes your course list, deadlines and announcements, without opening any course."
+  },
   "list": {
     "loading": "Loading your sources…"
   },
@@ -32,7 +41,8 @@
     "termStart": "Term starts",
     "feed": "Feed address",
     "feedPrivate": "Private feed address (stored in your keychain)",
-    "lastSynced": "Last synced"
+    "lastSynced": "Last synced",
+    "deadlinesChecked": "Deadlines and announcements checked {{when}}"
   },
   "status": {
     "label": "Status",
@@ -123,6 +133,7 @@
   "canvasForm": {
     "noticeTitle": "For your own use",
     "shareHint": "Helping classmates set up? Point them to the course folder + calendar feed option instead.",
+    "autoSync": "{{product}} syncs by itself while it's open. You can turn that off on Sources & sync.",
     "urlLabel": "Canvas address",
     "urlPlaceholder": "https://canvas.example.edu",
     "urlHint": "The address you open Canvas at in your browser — just the address, not a link to a course.",

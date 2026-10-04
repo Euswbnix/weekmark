@@ -17,6 +17,13 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 - Files are read in a separate, resource-limited process, so one bad PDF can't stop a sync; the
   diagnostic report counts the files that can't be read, by reason.
 - A backup of the database before an update changes its format.
+- Automatic sync: while the PageLamp app is running it syncs by itself, twice a day unless you
+  choose once a day or off (in the app, or `pagelamp sync --auto <off|daily|twice-daily>`). It
+  never downloads files. With nobody at the app it asks Canvas only for your course list,
+  deadlines and announcements; modules, pages, the file list and assignments are read when you
+  start a sync, or when you open PageLamp or bring it to the front and the last full sync is old
+  enough. A course found in between is listed at once and says that its materials haven't been
+  read yet. After you stop a sync, nothing starts by itself for an hour.
 - A new look for the desktop app: course pages read like paper with thin dividers, the toolbar
   turns to glass as you scroll, sync status sits in a small capsule, and a warm band marks this
   week. On Windows 11 22H2 and later the window uses Mica; "Reduce transparency" in Settings (or
@@ -34,6 +41,15 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   `phase`; `course_overview` gains `lifecycle`, and its timeline gains the phase and its structure
   (teaching segments, breaks, exams end, anchor). `list_courses` gains `phase`, `lifecycle` and
   `outside_term`.
+- MCP: `sync_status` says whether PageLamp syncs by itself (`auto_sync`,
+  `last_automatic_sync_at`), gives each source a `state` (fresh, old, never synced, failed, or
+  needs the student, or `materials_old` when only its deadlines and announcements are current)
+  and, when it is later than the last full sync, when those were read (`deadlines_synced_at`).
+  `course_overview`, `week_materials` and `read_material` carry a "data as of" line;
+  `list_courses`, `course_overview` and `week_materials` say when a course's modules and
+  materials haven't been read yet (`structure_pending`), and so does `search_materials` when a
+  search in that one course finds nothing. The hints no longer
+  suggest running `pagelamp sync`: an AI app must not sync for the student.
 - `pagelamp courses` groups courses into Current, Upcoming and Past; past courses (also in
   `--json`) are listed with `--past` or `--all`. `pagelamp course term` dates mean the first and
   last day of classes.

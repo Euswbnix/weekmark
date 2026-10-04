@@ -529,6 +529,7 @@
 "chrome.accessory.dismiss" = "关闭";
 "chrome.accessory.open" = "打开“数据来源与同步”";
 "chrome.accessory.syncingOf" = "正在同步 %1$@/%2$@ · %3$@";
+"chrome.accessory.syncingSource" = "正在同步 · %1$@";
 "chrome.appearance.contrast" = "增强对比度";
 "chrome.appearance.contrastHint" = "文字和边框更深，并且不使用半透明的玻璃效果。";
 "chrome.appearance.transparency" = "减少透明效果";
@@ -780,6 +781,8 @@
 "course.download.viewingNotice" = "通过 Canvas 下载文件可能会被算作“已查看”（例如满足模块里“必须查看”的要求）。";
 "course.header.freshness" = "数据来源：%1$@ · %2$@同步";
 "course.header.freshnessNever" = "数据来源：%1$@ · 尚未同步";
+"course.header.freshnessPending" = "数据来源：%1$@ · 资料尚未读取 · %2$@检查过截止日期和公告";
+"course.header.freshnessWithDeadlines" = "数据来源：%1$@ · %2$@同步 · %3$@检查过截止日期和公告";
 "course.header.hidden" = "已隐藏";
 "course.header.openWebsite" = "打开课程网站";
 "course.header.showInList" = "在课程列表中显示";
@@ -845,6 +848,8 @@
 "course.week.note.no_current_week.upcoming" = "这门课还没开始，所以没有“本周”。";
 "course.week.note.no_materials_this_week" = "这一周没有模块或资料。";
 "course.week.note.outside_term" = "今天不在这门课的学期日期范围内，所以没有“本周”。";
+"course.week.pending.description" = "PageLamp 在检查截止日期和公告时发现了这门课。它的模块和资料会在下一次完整同步时读取。想现在就读取，可以到“数据来源与同步”点“同步”。";
+"course.week.pending.title" = "这门课的资料还没有读取";
 "course.week.previous" = "上一周";
 "course.week.published" = "发布于 %1$@";
 "course.week.recent" = "近期资料";
@@ -859,11 +864,13 @@
 "courses.card.next" = "下一项：%1$@ · %2$@";
 "courses.card.noDeadlines" = "近期没有截止日期";
 "courses.card.notSynced" = "%1$@ · 还没有同步过";
+"courses.card.pending" = "%1$@ · 资料尚未读取 · %2$@检查过截止日期";
 "courses.card.setPolicy" = "去设置";
 "courses.card.setTerm" = "设置学期开始日期后就能确定周次";
 "courses.card.showInList" = "在课程列表中显示";
 "courses.card.shownAgain" = "%1$@ 已重新显示在课程列表中";
 "courses.card.synced" = "%1$@ · %2$@同步";
+"courses.card.syncedAndDeadlines" = "%1$@ · %2$@同步 · %3$@检查过截止日期";
 "courses.description" = "看看每门课这周上到哪儿了，接下来有什么要交。";
 "courses.empty.addSource" = "添加数据来源";
 "courses.empty.description" = "添加一个数据来源，PageLamp 就能找到你的课程。";
@@ -1429,8 +1436,14 @@
 "sources.addErrors.token.invalid" = "这看起来不是 Canvas 访问令牌。请从 Canvas 重新复制，再粘贴到这里。";
 "sources.addErrors.token.network" = "连不上 Canvas。请检查网络连接后重试。";
 "sources.addErrors.token.not_found" = "这个来源的地址上已经找不到 Canvas 了。请移除这个来源，再用现在的地址重新添加。";
+"sources.autoSync.hint" = "只有 PageLamp 开着的时候才会自动同步。你打开或切回 PageLamp 时，如果上次完整同步已经超过上面选的间隔，它会完整同步一次，和你点“同步”一样；Canvas 可能会把这记为你在各门课里的活动。其余时间它只刷新课程列表、截止日期和公告，不会打开任何一门课。";
+"sources.autoSync.label" = "自动同步";
+"sources.autoSync.option.daily" = "每天一次";
+"sources.autoSync.option.off" = "关闭";
+"sources.autoSync.option.twice_daily" = "每天两次";
 "sources.busy.checkAgain" = "重新检查";
 "sources.busy.title" = "已有其他同步在进行";
+"sources.canvasForm.autoSync" = "只要 PageLamp 开着，它会自己同步。可以在“数据来源与同步”里关掉。";
 "sources.canvasForm.httpWarning" = "Canvas 地址都是 https 开头的，请确认一下是不是 https://。";
 "sources.canvasForm.missingToken" = "请粘贴访问令牌。";
 "sources.canvasForm.missingUrl" = "请输入 Canvas 地址。";
@@ -1445,6 +1458,7 @@
 "sources.canvasForm.urlLabel" = "Canvas 地址";
 "sources.canvasForm.urlPlaceholder" = "https://canvas.example.edu";
 "sources.card.canvasAddress" = "Canvas 地址";
+"sources.card.deadlinesChecked" = "%1$@检查过截止日期和公告";
 "sources.card.feed" = "日历订阅地址";
 "sources.card.feedPrivate" = "私密的日历订阅地址（保存在系统钥匙串中）";
 "sources.card.folderPath" = "文件夹";
@@ -1584,9 +1598,12 @@
 "updates.updated.body" = "请退出并重新打开你的 AI 应用（Claude Desktop、Claude Code 或 Codex），让它使用新的 PageLamp。";
 "updates.updated.dismiss" = "关闭";
 "updates.updated.title" = "PageLamp 已更新到 %1$@";
+"updates.whatsNew.autoSync" = "自动同步";
 "updates.whatsNew.done" = "知道了";
 "updates.whatsNew.since" = "自 %1$@ 版本以来";
 "updates.whatsNew.title" = "PageLamp 有哪些新变化";
+"updates.whatsNew.topics.auto_sync.body" = "只要 PageLamp 开着，它会自己更新截止日期和公告。你打开或切回 PageLamp 时，它还会刷新课程材料，大约每天两次，和你点“同步”一样。它不会自己下载 Canvas 文件。Canvas 可能会把完整同步记为你在各门课里的活动。想改成每天一次或者关掉，可以到“数据来源与同步”的“自动同步”里设置。";
+"updates.whatsNew.topics.auto_sync.title" = "PageLamp 现在会自己同步了";
 "updates.whatsNew.topics.course_weeks.body" = "每门课都会显示当前是第几周、处于哪个阶段，已经结束的课程会归入“往期课程”。";
 "updates.whatsNew.topics.course_weeks.title" = "每门课都有周次和阶段";
 "updates.whatsNew.topics.update_check.body" = "它每天会从 GitHub 下载一个很小的文件，看看有没有新版本。和任何下载一样，GitHub 会看到你的 IP 地址和 PageLamp 的版本号；不会发送任何课程内容。安装任何更新之前一定会先问你。";

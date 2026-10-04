@@ -9,7 +9,7 @@ export type Backdrop = "none" | "mica";
 declare global {
   interface Window {
     /** What the Rust side built the window with (its initialization script sets it). */
-    __PAGELAMP_WINDOW__?: { backdrop?: string };
+    __PAGELAMP_WINDOW__?: { backdrop?: string; hidden?: boolean };
   }
 }
 

@@ -1,6 +1,7 @@
 //! Crate-graph rules (docs/design/v0.3-model-access.md §0.2, §10 rule 1):
-//! - `pagelamp-mcp` and `pagelamp-core` never depend on `pagelamp-llm` or `pagelamp-app`, so the
-//!   MCP code path can't reach a model or the network;
+//! - `pagelamp-mcp` and `pagelamp-core` never depend on `pagelamp-llm`, `pagelamp-app` or
+//!   `pagelamp-canvas`, so the MCP code path can't reach a model, the network or Canvas
+//!   (docs/ARCHITECTURE.md §3 rule 1);
 //! - `pagelamp-core`'s `test-support` feature (a way to build a `RenderedPrompt` without the
 //!   policy gate) is enabled only by dev-dependencies.
 
@@ -85,7 +86,7 @@ fn the_mcp_server_and_core_never_depend_on_the_model_layer() {
     );
     for root in ["pagelamp-mcp", "pagelamp-core", "pagelamp-extract"] {
         let reached = closure(&graph, root);
-        for forbidden in ["pagelamp-llm", "pagelamp-app"] {
+        for forbidden in ["pagelamp-llm", "pagelamp-app", "pagelamp-canvas"] {
             assert!(
                 !reached.contains(forbidden),
                 "{root} depends on {forbidden}: {reached:?}"

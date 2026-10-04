@@ -26,7 +26,8 @@
 //!     Authorization header to another host)
 //!   ```
 //!
-//! - Canvas is never called from the MCP server; only `pagelamp sync` calls this crate.
+//! - Canvas is never called from the MCP server; only a sync calls this crate (one the student
+//!   starts in an app or with `pagelamp sync`, or the app's automatic sync).
 //! - Pagination: follow `Link: <…>; rel="next"` as an opaque URL (must stay on base host).
 //! - Throttling: at most 2 concurrent requests; if `X-Rate-Limit-Remaining` < 100 slow down;
 //!   on 403 with body containing "Rate Limit Exceeded" or on 429, exponential backoff
@@ -88,10 +89,35 @@ pub struct SyncOptions {
     pub only_courses: Vec<String>,
     /// How downloaded files are read (`ingest::Extractor`; one per sync).
     pub extractor: pagelamp_core::ingest::Extractor,
+    /// A sync PageLamp started by itself: one request at a time, and the User-Agent says so.
+    pub automatic: bool,
+    /// Read only what Canvas serves without a course in the path: the token check, the course
+    /// list (with each syllabus), planner items and each course's announcements. No
+    /// `/courses/:id/…` request is made, so nothing of a course's modules, files, pages or
+    /// links is read, changed or removed. Assignment due dates come from the planner instead:
+    /// one inside its window is added or moved, none is removed. For a sync nobody is at the
+    /// app for (`SyncReport::new_courses` names the courses that still need a full sync).
+    pub user_level_only: bool,
 }
 
+/// What a sync did. `new_courses` and `read_courses` hold our course ids.
 #[derive(Clone, Debug, Default)]
 pub struct SyncReport {
+    /// Courses a `user_level_only` sync saw for the first time: listed now, with deadlines and
+    /// announcements, but their modules and materials are read by the next full sync. Each is
+    /// also recorded as waiting (`pagelamp_core::auto_sync::LightSync`) in the transaction that
+    /// stores the course, so a run that fails later still leaves that said.
+    pub new_courses: Vec<String>,
+    /// The course list, the planner and every course's announcements were read completely:
+    /// what a `user_level_only` sync is for. When false, deadlines or announcements may be as
+    /// old as before the run (the warnings say what was missed).
+    pub user_level_read: bool,
+    /// Courses whose structure this (full) sync read: it got the module listing, or was told
+    /// the student has none to see.
+    pub read_courses: Vec<String>,
+    /// Courses a full sync selected but couldn't read the structure of, in a way that may pass
+    /// (a 5xx or a bad answer for the module listing, a course it had to skip).
+    pub unread_courses: Vec<String>,
     pub courses: usize,
     pub modules: usize,
     pub materials: usize,
@@ -196,7 +222,7 @@ pub fn source_id(base_url: &str) -> String {
 
 /// Validate a token by calling `GET /api/v1/users/self`; returns the user's display name.
 pub async fn check_token(config: &CanvasConfig) -> Result<String, SourceError> {
-    let api = token_api(config, RetryPolicy::default())?;
+    let api = token_api(config, RetryPolicy::default(), false)?;
     let user: json::User = api
         .get_one(endpoint::Endpoint::UsersSelf)
         .await
@@ -243,7 +269,7 @@ pub async fn sync(
     options: &SyncOptions,
     progress: ProgressFn<'_>,
 ) -> Result<SyncReport, SourceError> {
-    let api = token_api(config, RetryPolicy::default())?;
+    let api = token_api(config, RetryPolicy::default(), options.automatic)?;
     // Same id the App stored when the source was added (from the normalised URL).
     let source_id = source_id(&normalize_base_url(&config.base_url)?);
     sync_with(&api, db_path, &source_id, options, progress).await
@@ -272,13 +298,14 @@ pub(crate) async fn sync_with<T: CanvasTransport>(
 fn token_api(
     config: &CanvasConfig,
     retry: RetryPolicy,
+    automatic: bool,
 ) -> Result<Api<TokenTransport>, SourceError> {
     let base = normalize_base_url(&config.base_url)?;
     let base = url::Url::parse(&base).map_err(|_| SourceError::other("invalid Canvas URL"))?;
     if config.token.trim().is_empty() {
         return Err(SourceError::auth("No Canvas access token was given."));
     }
-    let transport = TokenTransport::new(base.clone(), &config.token, retry)
+    let transport = TokenTransport::new(base.clone(), &config.token, retry, automatic)
         .map_err(|e| SourceError::auth(format!("The Canvas access token looks wrong ({e}).")))?;
     Ok(Api::new(transport, base))
 }

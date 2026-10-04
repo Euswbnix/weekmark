@@ -5,12 +5,13 @@ import type { Course, CourseOverview } from "@/api/types";
 import { PageHeader } from "@/components/common/PageHeader";
 import { PastCourseBadge } from "@/components/common/PastCourseBadge";
 import { PolicyBadge } from "@/components/common/PolicyBadge";
-import { SentenceWithTime, WHEN } from "@/components/common/SentenceWithTime";
+import { SentenceWithTime, WHEN, WHEN_2 } from "@/components/common/SentenceWithTime";
 import { useOpenExternal } from "@/components/common/useOpenExternal";
 import { WeekLabel } from "@/components/common/WeekLabel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { focusPageHeading } from "@/lib/focus";
+import { deadlinesReadSince } from "@/lib/freshness";
 import { isHttpUrl } from "@/lib/url";
 import { useSyncStore } from "@/stores/sync";
 import { BackToCourses } from "../BackToCourses";
@@ -62,7 +63,12 @@ export function CourseHeader({ overview }: { overview: CourseOverview }) {
   );
 }
 
-/** "Data from Course folder · synced 2 hours ago", plus "Syncing now…" while its source syncs. */
+/**
+ * "Data from Course folder · synced 2 hours ago", plus "Syncing now…" while its source syncs.
+ * "Synced" is the source's last full sync: deadlines and announcements a lighter automatic sync
+ * has read since get their own time, and a course only such a sync has found says that its
+ * materials haven't been read yet.
+ */
 function Freshness({ overview }: { overview: CourseOverview }) {
   const { t } = useTranslation("course");
   const sourceId = overview.course.source_id;
@@ -71,9 +77,21 @@ function Freshness({ overview }: { overview: CourseOverview }) {
     return s.running && !!progress && !progress.result;
   });
   const source = overview.source_label;
+  const deadlinesAt = deadlinesReadSince(overview.last_synced_at, overview.deadlines_synced_at);
   return (
     <>
-      {overview.last_synced_at ? (
+      {overview.structure_pending && overview.deadlines_synced_at ? (
+        <SentenceWithTime
+          text={t("header.freshnessPending", { source, when: WHEN })}
+          iso={overview.deadlines_synced_at}
+        />
+      ) : overview.last_synced_at && deadlinesAt ? (
+        <SentenceWithTime
+          text={t("header.freshnessWithDeadlines", { source, when: WHEN, deadlines: WHEN_2 })}
+          iso={overview.last_synced_at}
+          iso2={deadlinesAt}
+        />
+      ) : overview.last_synced_at ? (
         <SentenceWithTime
           text={t("header.freshness", { source, when: WHEN })}
           iso={overview.last_synced_at}

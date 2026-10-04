@@ -2,7 +2,7 @@ import { CircleAlert, LockKeyhole, TriangleAlert, UserRound } from "lucide-react
 import { type FormEvent, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { type ApiError, toApiError } from "@/api/errors";
-import { useAddCanvasSource } from "@/api/queries";
+import { useAddCanvasSource, useSyncPrefs } from "@/api/queries";
 import { SecretInput } from "@/components/common/SecretInput";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -31,6 +31,8 @@ export function AddCanvasForm({ submitLabel, onAdded, footerStart }: AddFormProp
   const { t } = useTranslation("sources");
   const { t: tc } = useTranslation();
   const addCanvas = useAddCanvasSource();
+  const syncPrefs = useSyncPrefs();
+  const autoSync = syncPrefs.data !== undefined && syncPrefs.data.auto_sync !== "off";
   const errorText = useAddErrorText();
   const id = useId();
 
@@ -92,6 +94,8 @@ export function AddCanvasForm({ submitLabel, onAdded, footerStart }: AddFormProp
           <AlertDescription>
             <p className="font-medium text-foreground">{tc("canvasNotice")}</p>
             <p>{t("canvasForm.shareHint")}</p>
+            {/* A new student adds Canvas here before ever seeing "What's new". */}
+            {autoSync ? <p>{t("canvasForm.autoSync")}</p> : null}
           </AlertDescription>
         </Alert>
 

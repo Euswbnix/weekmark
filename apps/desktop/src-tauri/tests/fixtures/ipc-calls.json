@@ -58,6 +58,24 @@
     }
   },
   {
+    "cmd": "sync_all",
+    "args": {
+      "req": {
+        "automatic": "unattended"
+      },
+      "onEvent": "__CHANNEL__:0"
+    }
+  },
+  {
+    "cmd": "sync_all",
+    "args": {
+      "req": {
+        "automatic": "attended"
+      },
+      "onEvent": "__CHANNEL__:0"
+    }
+  },
+  {
     "cmd": "sync_source",
     "args": {
       "sourceId": "folder:contract-test",
@@ -377,6 +395,18 @@
       "prefs": {
         "auto_check": true,
         "channel": "beta"
+      }
+    }
+  },
+  {
+    "cmd": "sync_prefs",
+    "args": {}
+  },
+  {
+    "cmd": "set_sync_prefs",
+    "args": {
+      "prefs": {
+        "auto_sync": "daily"
       }
     }
   },

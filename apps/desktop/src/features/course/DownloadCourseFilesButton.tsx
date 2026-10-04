@@ -49,7 +49,8 @@ export function DownloadCourseFilesButton({
   async function start() {
     const ran = await download(course.id);
     if (!ran) {
-      toast.info(tc("sync.busy"));
+      // This window's own run is in the way (possibly one PageLamp started itself).
+      toast.info(tc("errors.busy"));
       return;
     }
     const { lastSummary, runError } = useSyncStore.getState();

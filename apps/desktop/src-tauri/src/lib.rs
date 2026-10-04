@@ -73,6 +73,8 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         commands::log_ui_error,
         commands::update_prefs,
         commands::set_update_prefs,
+        commands::sync_prefs,
+        commands::set_sync_prefs,
         commands::effective_update_channel,
         commands::startup_tasks,
         commands::acknowledge_whats_new,

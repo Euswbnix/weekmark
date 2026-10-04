@@ -56,6 +56,7 @@
     "title": "What's new in {{product}}",
     "since": "Since version {{version}}",
     "done": "Got it",
+    "autoSync": "Sync automatically",
     "topics": {
       "update_check": {
         "title": "{{product}} now updates itself",
@@ -64,6 +65,10 @@
       "course_weeks": {
         "title": "Weeks and phases for every course",
         "body": "Each course shows its current week and phase, and finished courses move to “Past courses”."
+      },
+      "auto_sync": {
+        "title": "{{product}} now syncs by itself",
+        "body": "While {{product}} is open, it keeps your deadlines and announcements current by itself. When you open {{product}} or come back to it, it also refreshes your course materials, about twice a day, the same as pressing Sync. It never downloads Canvas files by itself. Canvas may record a full sync as your activity in each course. To change how often it syncs, or to turn it off, go to Sources & sync → Automatic sync."
       }
     }
   },

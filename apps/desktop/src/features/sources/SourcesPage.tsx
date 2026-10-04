@@ -19,6 +19,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { useStartSync, useSyncActivity, useSyncStore } from "@/stores/sync";
 import { AddSourceDialog } from "./AddSourceDialog";
+import { AutoSyncSetting } from "./AutoSyncSetting";
 import { BusyBanner } from "./BusyBanner";
 import { ReplaceSecretDialog } from "./ReplaceSecretDialog";
 import { SourceCard } from "./SourceCard";
@@ -72,6 +73,8 @@ export function SourcesPage() {
       />
 
       <div className="space-y-6">
+        {list.length > 0 ? <AutoSyncSetting /> : null}
+
         {externalBusy ? (
           <BusyBanner
             onCheckAgain={() => void queryClient.invalidateQueries({ queryKey: queryKeys.all })}
@@ -81,7 +84,7 @@ export function SourcesPage() {
 
         <SyncProgressPanel
           onRetry={() => void startSync()}
-          onDismiss={() => useSyncStore.getState().reset()}
+          onDismiss={() => useSyncStore.getState().hideRun()}
           announce={false}
         />
 

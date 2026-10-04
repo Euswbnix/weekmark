@@ -190,6 +190,10 @@ const MIRRORED: &[&str] = &[
     "UnreadableFiles",
     "UpdateChannel",
     "UpdatePrefs",
+    "AutoSync",
+    "SyncPrefs",
+    "AutoSyncTrigger",
+    "SyncDue",
     "WhatsNewTopic",
     "WhatsNew",
     "StartupTasks",
@@ -321,6 +325,7 @@ fn sync_request_defaults_match_the_facade() {
     assert!(!facade.download_files);
     assert_eq!(facade.max_file_mb, 50);
     assert!(facade.only_courses.is_empty());
+    assert!(facade.automatic.is_none());
     let exported = default_sync_request();
     assert_eq!(exported.max_file_mb, facade.max_file_mb);
 }

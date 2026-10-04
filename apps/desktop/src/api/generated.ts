@@ -209,6 +209,21 @@ export type SourceKind = "canvas" | "folder" | "ical";
 export type SourceErrorKind =
   "auth_expired_or_revoked" | "network" | "not_found" | "rate_limited" | "other";
 /**
+ * How often PageLamp syncs by itself while it runs.
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "AutoSync".
+ */
+export type AutoSync = "off" | "daily" | "twice_daily";
+/**
+ * Why PageLamp starts a sync by itself. The shell says which; what each one syncs is the
+ * facade's decision (the shells never choose it).
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "AutoSyncTrigger".
+ */
+export type AutoSyncTrigger = "unattended" | "attended";
+/**
  * Progress of `read_course_calendars`: one course after another, each with its `GenEvent`s.
  *
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
@@ -721,7 +736,7 @@ export type SnoozeKind = "not_now" | "keep";
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
  * via the `definition` "WhatsNewTopic".
  */
-export type WhatsNewTopic = "update_check" | "course_weeks";
+export type WhatsNewTopic = "update_check" | "course_weeks" | "auto_sync";
 /**
  * Progress stream of a sync run (desktop forwards these through a `tauri::ipc::Channel`).
  *
@@ -831,6 +846,8 @@ export interface PageLampAppTypes {
   ai_status: AiStatus;
   app_error: AppError;
   app_status: AppStatus;
+  auto_sync: AutoSync;
+  auto_sync_trigger: AutoSyncTrigger;
   backend_kind: BackendKind;
   backend_problem: BackendProblem;
   backend_ref: BackendRef;
@@ -897,7 +914,9 @@ export interface PageLampAppTypes {
   stored_study_plan: StoredStudyPlan;
   structured_output_tier: StructuredOutputTier;
   syllabus_offer: SyllabusOffer;
+  sync_due: SyncDue;
   sync_event: SyncEvent;
+  sync_prefs: SyncPrefs;
   sync_request: SyncRequest;
   sync_summary: SyncSummary;
   term_source: TermSource;
@@ -1099,9 +1118,21 @@ export interface AppError {
  * via the `definition` "AppStatus".
  */
 export interface AppStatus {
+  /**
+   * How often PageLamp syncs by itself while it runs.
+   */
+  auto_sync: "off" | "daily" | "twice_daily";
   counts: StoreCounts;
   data_dir: string;
   db_path: string;
+  /**
+   * Per source id: when its deadlines and announcements were last read, for a source an
+   * automatic sync has read lightly since its last full sync (`sources[].last_synced_at`
+   * keeps meaning the full sync). A source without an entry has that one clock.
+   */
+  deadlines_synced_at: {
+    [k: string]: string;
+  };
   /**
    * Most recent successful sync over all sources.
    */
@@ -1620,10 +1651,17 @@ export interface CourseOverview {
   course: Course;
   current_modules: Module[];
   /**
+   * When its deadlines and announcements were last read (`CourseSummary`).
+   */
+  deadlines_synced_at?: string | null;
+  /**
    * Files a "download this course's files" action would fetch: kind `file`, text status
    * `not_downloaded` and no `download_blocked` reason (all weeks).
    */
   downloadable_files: number;
+  /**
+   * When the course's source last synced in full (modules and materials).
+   */
   last_synced_at?: string | null;
   lifecycle: CourseLifecycle;
   /**
@@ -1635,6 +1673,10 @@ export interface CourseOverview {
    */
   recent_materials: MaterialView[];
   source_label: string;
+  /**
+   * Its modules and materials haven't been read yet (`CourseSummary`).
+   */
+  structure_pending: boolean;
   timeline: CourseTimeline;
   /**
    * Deadlines due in the next `UPCOMING_DAYS` days, soonest first.
@@ -1931,7 +1973,13 @@ export interface CourseSummary {
   counts: CourseCounts;
   course: Course;
   /**
-   * When that source last synced successfully (data freshness).
+   * When the source's deadlines and announcements were last read: `last_synced_at`, or a
+   * later automatic sync that read only those (`auto_sync::LightSync`).
+   */
+  deadlines_synced_at?: string | null;
+  /**
+   * When that source last synced in full (the freshness of the course's modules and
+   * materials).
    */
   last_synced_at?: string | null;
   lifecycle: CourseLifecycle1;
@@ -1940,6 +1988,12 @@ export interface CourseSummary {
    * Label of the source this course came from (e.g. "Quercus", "~/Courses").
    */
   source_label: string;
+  /**
+   * An automatic sync found this course, and no full sync has read it yet: it is listed
+   * with its deadlines and announcements, but its modules and materials are still missing
+   * (not empty). The next full sync reads them.
+   */
+  structure_pending: boolean;
   timeline: CourseTimeline;
 }
 /**
@@ -2602,6 +2656,7 @@ export interface SourceSyncResult {
  * via the `definition` "StartupTasks".
  */
 export interface StartupTasks {
+  sync_due: SyncDue;
   /**
    * Run the automatic update check now: it is on, the student saw the disclosure (onboarding
    * or What's new), no What's new is waiting, and the last check is 24 h or more ago.
@@ -2616,6 +2671,30 @@ export interface StartupTasks {
    * Show What's new (upgraders only) until `acknowledge_whats_new`.
    */
   whats_new?: WhatsNew | null;
+}
+/**
+ * Whether an automatic sync is due, for each reason the shell may have to ask: automatic sync
+ * is on, no What's new is waiting, no sync is running, and a source that doesn't need the
+ * student was last read the setting's interval ago or never, with no retry wait running
+ * (`auto_sync`). Each trigger has its own clock, since they read different things: the two
+ * can differ. The shell passes the trigger that is true to `sync_all`, starts nothing else
+ * on it, and shows nothing when the run is refused or fails.
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "SyncDue".
+ */
+export interface SyncDue {
+  /**
+   * When the student is at the app: it was just opened or brought to the front, or What's
+   * new was just closed (`AutoSyncTrigger::Attended`). Ask for this one first then. The
+   * last full sync is the interval old, or a course waits for its first one.
+   */
+  attended: boolean;
+  /**
+   * From the app's timer (`AutoSyncTrigger::Unattended`): deadlines and announcements are
+   * the interval old.
+   */
+  unattended: boolean;
 }
 /**
  * What's new since `since` (`None`: an update from 0.1, which didn't record its version).
@@ -2687,12 +2766,32 @@ export interface SyllabusOffer {
   reason_code: string;
 }
 /**
+ * The student's sync settings.
+ *
+ * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
+ * via the `definition` "SyncPrefs".
+ */
+export interface SyncPrefs {
+  /**
+   * How often PageLamp syncs by itself while it runs. Default twice a day.
+   */
+  auto_sync?: "off" | "daily" | "twice_daily";
+}
+/**
  * Options for a sync run. All fields have defaults, so `{}` is a valid request.
  *
  * This interface was referenced by `PageLampAppTypes`'s JSON-Schema
  * via the `definition` "SyncRequest".
  */
 export interface SyncRequest {
+  /**
+   * PageLamp started this sync by itself (`StartupTasks.sync_due`), not the student, and
+   * why. Only `sync_all` takes it: the run happens only if it is still due, is counted as an
+   * attempt first, leaves out the sources that need the student, never downloads files (the
+   * fields above are ignored) and keeps a failure that may pass by itself quiet
+   * (`auto_sync`). `None`: the student started it.
+   */
+  automatic?: AutoSyncTrigger | null;
   /**
    * Download LMS (Canvas) files and index their text. Default FALSE: downloading a file
    * through Canvas counts as viewing it (it can complete "must view" module requirements

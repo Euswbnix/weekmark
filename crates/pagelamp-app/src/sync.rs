@@ -12,6 +12,7 @@
 
 use chrono::{NaiveDate, Utc};
 use pagelamp_canvas::{CanvasConfig, SyncOptions};
+use pagelamp_core::auto_sync::SyncScope;
 use pagelamp_core::ingest::Extractor;
 use pagelamp_core::model::{SourceKind, SourceRecord};
 use pagelamp_core::paths;
@@ -20,10 +21,18 @@ use pagelamp_core::store::Store;
 use tokio::sync::mpsc;
 
 use crate::activity::ActivityKind;
+use crate::auto_sync::{automatic_run_records, scope_of};
 use crate::lock::SyncLock;
 use crate::{
     App, AppError, AppErrorKind, Result, SourceSyncResult, SyncEvent, SyncRequest, SyncSummary,
 };
+
+/// Whether `req` is an automatic run that asks Canvas for nothing with a course in its path
+/// (`auto_sync::scope_of`).
+fn is_light(req: &SyncRequest) -> bool {
+    req.automatic
+        .is_some_and(|trigger| scope_of(trigger) == SyncScope::UserLevel)
+}
 
 /// What a source sync produced (the counters of `SourceSyncResult`).
 #[derive(Default)]
@@ -37,22 +46,54 @@ struct Counts {
     warnings: Vec<String>,
     course_summaries: Vec<CourseSyncSummary>,
     requests: Option<u32>,
+    /// Canvas, a light run: courses seen for the first time (their structure isn't read yet).
+    new_courses: Vec<String>,
+    /// Canvas, a full run: courses whose structure was read.
+    read_courses: Vec<String>,
+    /// Canvas, a full run: courses whose structure couldn't be read this time.
+    unread_courses: Vec<String>,
 }
 
 impl App {
     /// Sync every source: course-creating sources (folder, Canvas) first, then calendar
     /// feeds, so feed events can be matched to their courses in the same run; otherwise in
     /// `list_sources` order. Holds `sync.lock` for the whole run (`Busy` if taken).
+    ///
+    /// With `req.automatic` (a run PageLamp starts by itself; `auto_sync`): an empty summary
+    /// when no run is due any more; else the attempt is counted first, only the sources that
+    /// don't need the student are tried, and files are never downloaded.
     pub async fn sync_all(
         &self,
         req: SyncRequest,
         on_event: impl Fn(SyncEvent) + Send + Sync,
     ) -> Result<SyncSummary> {
+        // Before the lock: a refused automatic run counts as an attempt too.
+        let (req, only_sources) = if let Some(trigger) = req.automatic {
+            let Some(sources) = self.begin_automatic_sync(trigger, Utc::now())? else {
+                let now = Utc::now();
+                return Ok(SyncSummary {
+                    started_at: now,
+                    finished_at: now,
+                    ok: true,
+                    results: Vec::new(),
+                });
+            };
+            let req = SyncRequest {
+                automatic: Some(trigger),
+                ..SyncRequest::default()
+            };
+            (req, Some(sources))
+        } else {
+            (req, None)
+        };
         let _lock = self.acquire_sync_lock()?;
         let _activity = self.begin_activity(ActivityKind::Sync, None);
         let cancel = self.begin_cancellable();
         let started_at = Utc::now();
         let mut sources = self.read_store()?.list_sources()?;
+        if let Some(only) = &only_sources {
+            sources.retain(|source| only.contains(&source.id));
+        }
         // Stable: keeps the label order within each group.
         sources.sort_by_key(|source| source.kind == SourceKind::Ical);
         let mut results = Vec::with_capacity(sources.len());
@@ -63,9 +104,13 @@ impl App {
                 return Err(AppError::cancelled());
             }
         }
+        let finished_at = Utc::now();
+        if let Some(trigger) = req.automatic {
+            self.finish_automatic_sync(trigger, &results, finished_at);
+        }
         Ok(SyncSummary {
             started_at,
-            finished_at: Utc::now(),
+            finished_at,
             ok: results.iter().all(|r| r.ok),
             results,
         })
@@ -79,6 +124,11 @@ impl App {
         req: SyncRequest,
         on_event: impl Fn(SyncEvent) + Send + Sync,
     ) -> Result<SourceSyncResult> {
+        // Only `sync_all` runs by itself.
+        let req = SyncRequest {
+            automatic: None,
+            ..req
+        };
         let _lock = self.acquire_sync_lock()?;
         let _activity = self.begin_activity(ActivityKind::Sync, Some(source_id));
         let cancel = self.begin_cancellable();
@@ -227,12 +277,39 @@ impl App {
             ),
             (Err(_), None) => {}
         }
-        let recorded = self.write_store().and_then(|store| {
-            let error = error.as_ref().map(|(kind, msg)| (*kind, msg.as_str()));
-            Ok(store.record_sync(&source.id, finished_at, error)?)
-        });
-        if let Err(err) = recorded {
-            tracing::warn!(source = %source.id, "could not record sync outcome: {err}");
+        // An automatic run keeps a failure that may pass by itself to its attempts record:
+        // the source isn't marked failed, so nothing asks for the student's attention.
+        let quiet = req.automatic.is_some()
+            && error
+                .as_ref()
+                .is_some_and(|(kind, _)| !automatic_run_records(*kind));
+        // A light run of a Canvas source read only its deadlines and announcements: it has
+        // its own stamp, and the source's `last_synced_at` (the last full sync) stays.
+        let canvas = source.kind == SourceKind::Canvas;
+        let light = is_light(req) && canvas;
+        // A Canvas sync limited to some courses ("Download this course's files", `sync
+        // --course`) read only those: it must not make the whole source look freshly synced,
+        // to the student, to an AI app or to the automatic sync's clocks. A good end clears
+        // the source's error and nothing else. (Folder and feed sources ignore the limit.)
+        let limited = canvas && !req.only_courses.is_empty();
+        if let (true, Ok(counts)) = (light, &outcome) {
+            self.record_light_sync(&source.id, finished_at, &counts.new_courses);
+        } else if !quiet {
+            let recorded = self.write_store().and_then(|store| {
+                let error = error.as_ref().map(|(kind, msg)| (*kind, msg.as_str()));
+                match error {
+                    None if limited => store.clear_source_error(&source.id)?,
+                    error => store.record_sync(&source.id, finished_at, error)?,
+                }
+                Ok(())
+            });
+            if let Err(err) = recorded {
+                tracing::warn!(source = %source.id, "could not record sync outcome: {err}");
+            }
+            if let (true, Ok(counts)) = (canvas, &outcome) {
+                let only = limited.then_some(counts.read_courses.as_slice());
+                self.structure_was_read(&source.id, only, &counts.unread_courses);
+            }
         }
         on_event(SyncEvent::SourceFinished {
             source_id: source.id.clone(),
@@ -380,8 +457,19 @@ impl App {
             files_dir: paths::files_dir_in(self.data_dir()),
             only_courses: req.only_courses.clone(),
             extractor: extractor.clone(),
+            automatic: req.automatic.is_some(),
+            user_level_only: is_light(req),
         };
         let report = pagelamp_canvas::sync(&self.db_path(), &config, &options, progress).await?;
+        if options.user_level_only && !report.user_level_read {
+            // A light run is only for deadlines and announcements. One that couldn't read
+            // them all doesn't count as having read them: no stamp, and the attempt waits
+            // like any that failed. (What it did read is stored.) It may pass by itself, so
+            // it is reported like a network failure, which an automatic run keeps quiet.
+            return Err(SourceError::network(
+                "Canvas deadlines and announcements could not be read completely.",
+            ));
+        }
         Ok(Counts {
             courses: report.courses,
             modules: report.modules,
@@ -392,6 +480,9 @@ impl App {
             warnings: report.warnings,
             course_summaries: report.course_summaries,
             requests: Some(u32::try_from(report.requests).unwrap_or(u32::MAX)),
+            new_courses: report.new_courses,
+            read_courses: report.read_courses,
+            unread_courses: report.unread_courses,
         })
     }
 
@@ -435,13 +526,19 @@ impl CancelGuard<'_> {
 
 impl Drop for CancelGuard<'_> {
     fn drop(&mut self) {
-        let mut current = self
-            .app
-            .state
-            .sync_cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *current = None;
+        {
+            let mut current = self
+                .app
+                .state
+                .sync_cancel
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *current = None;
+        }
+        // The student pressed Stop: the automatic sync waits before it starts anything.
+        if self.flag.is_cancelled() {
+            self.app.sync_was_stopped(Utc::now());
+        }
     }
 }
 

@@ -82,7 +82,8 @@ fn each_shell_acknowledges_only_its_own_whats_new() {
         .unwrap();
     let now = at("2026-10-01T09:00:00Z");
 
-    // The Mac app: every topic since 0.0.9 but the update check (it updates with Sparkle).
+    // The Mac app: every topic since 0.0.9 but the update check (it updates with Sparkle) and
+    // automatic sync (it doesn't run the timer; a row shows only in a shell that does the thing).
     let mac = open_mac(&data);
     let topics = mac
         .startup_tasks(now)
@@ -91,6 +92,7 @@ fn each_shell_acknowledges_only_its_own_whats_new() {
         .expect("the Mac app's What's new")
         .topics;
     assert!(!topics.contains(&WhatsNewTopic::UpdateCheck), "{topics:?}");
+    assert!(!topics.contains(&WhatsNewTopic::AutoSync), "{topics:?}");
     assert!(topics.contains(&WhatsNewTopic::CourseWeeks), "{topics:?}");
     mac.acknowledge_whats_new().unwrap();
     assert!(mac.startup_tasks(now).unwrap().whats_new.is_none());

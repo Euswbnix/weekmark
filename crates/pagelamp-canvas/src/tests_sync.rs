@@ -15,7 +15,7 @@ use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
 use crate::api::Api;
-use crate::transport::{RetryPolicy, TokenTransport};
+use crate::transport::{CanvasError, RetryPolicy, TokenTransport};
 use crate::{SyncOptions, source_id, sync_with};
 
 const TOKEN: &str = "demo-not-a-real-token";
@@ -67,13 +67,19 @@ impl Fixture {
     }
 
     fn api(&self) -> Api<TokenTransport> {
+        self.api_for(false)
+    }
+
+    /// The API as an automatic sync (`true`) or a sync the student started uses it.
+    fn api_for(&self, automatic: bool) -> Api<TokenTransport> {
         let base = url::Url::parse(&self.canvas.uri()).unwrap();
         let retry = RetryPolicy {
             base_delay: Duration::from_millis(1),
             max_tries: 3,
+            max_retry_after: Duration::from_millis(20),
         };
         Api::new(
-            TokenTransport::new(base.clone(), TOKEN, retry).unwrap(),
+            TokenTransport::new(base.clone(), TOKEN, retry, automatic).unwrap(),
             base,
         )
     }
@@ -85,6 +91,8 @@ impl Fixture {
             files_dir: self.files.clone(),
             only_courses: Vec::new(),
             extractor: Default::default(),
+            automatic: false,
+            user_level_only: false,
         }
     }
 
@@ -516,6 +524,81 @@ async fn throttling_backs_off_then_succeeds_or_gives_up() {
     );
 }
 
+/// A throttled answer's `Retry-After` is waited for, up to the policy's limit, and a sync
+/// PageLamp started by itself says so in its User-Agent.
+#[tokio::test]
+async fn retry_after_is_honoured_up_to_a_limit_and_an_automatic_sync_names_itself() {
+    let agents = |requests: Vec<Request>| -> Vec<String> {
+        requests
+            .iter()
+            .map(|r| r.headers["user-agent"].to_str().unwrap().to_string())
+            .collect()
+    };
+
+    // Canvas asks for an hour: more than a sync waits inside itself (the wait couldn't be
+    // stopped). The call ends as throttled at once, after that one request.
+    let f = Fixture::new().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/users/self"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "3600"))
+        .mount(&f.canvas)
+        .await;
+    let started = std::time::Instant::now();
+    let throttled = f
+        .api_for(true)
+        .get_one::<crate::json::User>(crate::endpoint::Endpoint::UsersSelf)
+        .await
+        .unwrap_err();
+    assert!(matches!(throttled, CanvasError::RateLimited));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let automatic = agents(f.canvas.received_requests().await.unwrap());
+    assert_eq!(automatic.len(), 1, "no second try");
+    assert!(
+        automatic[0].ends_with("(read-only; automatic sync)"),
+        "{automatic:?}"
+    );
+
+    // One second is inside the limit: it is waited (not the 1 ms backoff), then the call
+    // succeeds. A sync the student started keeps the plain User-Agent.
+    let g = Fixture::new().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/users/self"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "1"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&g.canvas)
+        .await;
+    g.get("/users/self", json!({"id": 1, "name": "Demo Student"}))
+        .await;
+    let base = url::Url::parse(&g.canvas.uri()).unwrap();
+    let retry = RetryPolicy {
+        base_delay: Duration::from_millis(1),
+        max_tries: 3,
+        max_retry_after: Duration::from_secs(5),
+    };
+    let api = Api::new(
+        TokenTransport::new(base.clone(), TOKEN, retry, false).unwrap(),
+        base,
+    );
+    let started = std::time::Instant::now();
+    let user: crate::json::User = api
+        .get_one(crate::endpoint::Endpoint::UsersSelf)
+        .await
+        .unwrap();
+    assert_eq!(user.name.as_deref(), Some("Demo Student"));
+    let waited = started.elapsed();
+    assert!(
+        waited >= Duration::from_millis(900) && waited < Duration::from_secs(10),
+        "{waited:?}"
+    );
+    let manual = agents(g.canvas.received_requests().await.unwrap());
+    assert_eq!(manual.len(), 2);
+    assert!(
+        manual.iter().all(|agent| agent.ends_with("(read-only)")),
+        "{manual:?}"
+    );
+}
+
 #[tokio::test]
 async fn forbidden_areas_warn_and_prevent_pruning() {
     let f = Fixture::new().await;
@@ -669,6 +752,511 @@ async fn every_request_is_an_allow_listed_get() {
     }
 }
 
+/// A sync nobody is at the app for: Canvas may record a request for a course's modules, files,
+/// pages or assignments as the student's activity in that course, so none is made.
+#[tokio::test]
+async fn a_user_level_sync_asks_for_no_course_and_removes_only_what_it_read() {
+    let f = Fixture::new().await;
+    f.standard().await;
+    // Beside Problem Set 1: a graded quiz, and a report the planner won't list.
+    let day = |days: i64| (Utc::now() + TimeDelta::days(days)).to_rfc3339();
+    Mock::given(method("GET"))
+        .and(path("/api/v1/courses/101/assignments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": 9, "name": "Problem Set 1", "due_at": day(5),
+             "html_url": "/courses/101/assignments/9", "submission_types": ["online_upload"]},
+            {"id": 11, "name": "Quiz A", "due_at": day(7),
+             "html_url": "/courses/101/assignments/11", "submission_types": ["online_quiz"]},
+            {"id": 13, "name": "Lab report", "due_at": day(20),
+             "html_url": "/courses/101/assignments/13", "submission_types": ["online_upload"]}
+        ])))
+        .with_priority(1)
+        .mount(&f.canvas)
+        .await;
+    let full = f.sync(&f.options(false)).await.unwrap();
+    let demo = course101(&f);
+    assert_eq!(full.read_courses.len(), 2);
+    assert!(full.read_courses.contains(&demo));
+    let ids =
+        |materials: Vec<Material>| -> Vec<String> { materials.into_iter().map(|m| m.id).collect() };
+    let materials_before = ids(f.store().list_materials(&demo).unwrap());
+    let modules_before = f.store().list_modules(&demo).unwrap().len();
+    let before = all_events(&f.store());
+    let was = |title: &str| before.iter().find(|e| e.title == title).unwrap().clone();
+    assert_eq!(was("Quiz A").kind, EventKind::QuizDue);
+
+    // Canvas moves on: a third course, a new announcement, a changed syllabus, Problem Set 1
+    // and Quiz A moved, a new assignment and a graded quiz. Only the user-level endpoints
+    // answer.
+    f.canvas.reset().await;
+    f.get("/users/self", json!({"id": 1, "name": "Demo Student"}))
+        .await;
+    f.get(
+        "/courses",
+        json!([
+            {"id": 101, "name": "Intro to Demo Studies", "course_code": "DEMO101",
+             "syllabus_body": "<p>Weekly quizzes, a midterm and a final project.</p>"},
+            {"id": 202, "name": "Advanced Demo Studies", "course_code": "DEMO202"},
+            {"id": 404, "name": "Demo Seminar", "course_code": "DEMO404"}
+        ]),
+    )
+    .await;
+    for (course, body) in [
+        (
+            "101",
+            json!([
+                {"id": 701, "title": "Room change", "message": "<p>The lab moves to room 2.</p>", "posted_at": "2026-09-22T12:00:00Z"},
+                {"id": 702, "title": "Midterm date", "message": "<p>The midterm is on a Thursday.</p>", "posted_at": "2026-09-29T12:00:00Z"}
+            ]),
+        ),
+        ("202", json!([])),
+        (
+            "404",
+            json!([{"id": 711, "title": "Welcome", "message": "<p>Welcome to the seminar.</p>", "posted_at": "2026-09-30T12:00:00Z"}]),
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path("/api/v1/announcements"))
+            .and(query_param(
+                "context_codes[]",
+                format!("course_{course}").as_str(),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&f.canvas)
+            .await;
+    }
+    let moved = Utc::now() + TimeDelta::days(9);
+    f.get(
+        "/planner/items",
+        json!([
+            {"plannable_id": 801, "plannable_type": "planner_note", "plannable_date": day(2),
+             "plannable": {"title": "Buy a lab coat"}},
+            // Handed in: the planner links to the student's submission and says more than
+            // PageLamp may keep.
+            {"plannable_id": 9, "plannable_type": "assignment", "course_id": 101,
+             "plannable_date": moved.to_rfc3339(),
+             "plannable": {"title": "Problem Set 1", "points_possible": 10,
+                           "details": "<p>SECRET-DETAILS do question 4</p>",
+                           "description": "<p>SECRET-DESCRIPTION</p>"},
+             "submissions": {"submitted": true, "graded": true, "feedback": {"comment": "SECRET-FEEDBACK"}},
+             "html_url": "/courses/101/assignments/9/submissions/1"},
+            // A quiz the planner happens to name as an assignment: it stays a quiz.
+            {"plannable_id": 11, "plannable_type": "assignment", "course_id": 101,
+             "plannable_date": day(8), "plannable": {"title": "Quiz A"},
+             "html_url": "/courses/101/assignments/11/submissions/1"},
+            // New, and handed in already.
+            {"plannable_id": 10, "plannable_type": "assignment", "course_id": 101,
+             "plannable_date": day(12), "plannable": {"title": "Problem Set 2"},
+             "html_url": "/courses/101/assignments/10/submissions/1"},
+            {"plannable_id": 44, "plannable_type": "quiz", "course_id": 404,
+             "plannable_date": day(6),
+             "plannable": {"title": "Quiz 1", "assignment_id": 12, "points_possible": 5,
+                           "details": "SECRET-QUIZ-TEXT"},
+             "html_url": "/courses/404/quizzes/44"},
+            // A graded discussion no full sync has seen: its date may be the day it was posted.
+            {"plannable_id": 51, "plannable_type": "discussion_topic", "course_id": 101,
+             "plannable_date": day(-1),
+             "plannable": {"title": "Week 3 discussion", "assignment_id": 14}}
+        ]),
+    )
+    .await;
+
+    let light = SyncOptions {
+        automatic: true,
+        user_level_only: true,
+        ..f.options(false)
+    };
+    let report = sync_with(&f.api_for(true), &f.db, &f.source, &light, &no_progress)
+        .await
+        .unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(report.user_level_read);
+
+    // No request has a course in its path.
+    let requests = f.canvas.received_requests().await.unwrap();
+    let mut paths: Vec<&str> = requests.iter().map(|r| r.url.path()).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    assert_eq!(
+        paths,
+        [
+            "/api/v1/announcements",
+            "/api/v1/courses",
+            "/api/v1/planner/items",
+            "/api/v1/users/self"
+        ]
+    );
+
+    // The course it met for the first time is reported, and nothing counts as read in full.
+    let seminar = format!("{}/course/404", f.source);
+    assert_eq!(report.new_courses, std::slice::from_ref(&seminar));
+    assert!(report.read_courses.is_empty());
+    let store = f.store();
+    assert!(store.list_modules(&seminar).unwrap().is_empty());
+    assert_eq!(
+        ids(store.list_materials(&seminar).unwrap()),
+        [format!("{}/announcement/711", f.source)]
+    );
+
+    // Everything the full sync read is still there, with the new announcement.
+    let after = ids(store.list_materials(&demo).unwrap());
+    for id in &materials_before {
+        assert!(after.contains(id), "{id} was removed");
+    }
+    assert_eq!(after.len(), materials_before.len() + 1);
+    assert!(has_material(&f, "/announcement/702"));
+    assert_eq!(store.list_modules(&demo).unwrap().len(), modules_before);
+    assert_eq!(store.search("photosynthesis", None, 5).unwrap().len(), 1);
+    assert_eq!(store.search("thursday", None, 5).unwrap().len(), 1);
+    assert!(
+        store
+            .course_syllabus_text(&demo)
+            .unwrap()
+            .unwrap()
+            .contains("a midterm")
+    );
+
+    // Due dates follow the planner. A known one moves and keeps its kind and its link.
+    let events = all_events(&store);
+    let event = |title: &str| events.iter().find(|e| e.title == title).unwrap();
+    let ps1 = event("Problem Set 1");
+    assert_eq!(
+        (&ps1.id, &ps1.url),
+        (&was("Problem Set 1").id, &was("Problem Set 1").url)
+    );
+    assert_eq!(
+        ps1.due_at.unwrap().timestamp(),
+        moved.timestamp(),
+        "the date moved"
+    );
+    let quiz_a = event("Quiz A");
+    assert_eq!(
+        (quiz_a.kind, &quiz_a.url),
+        (EventKind::QuizDue, &was("Quiz A").url)
+    );
+    assert!(quiz_a.due_at.unwrap() > was("Quiz A").due_at.unwrap());
+    // One the planner doesn't list is never removed or changed.
+    let report_due = event("Lab report");
+    assert_eq!(
+        (&report_due.id, report_due.due_at, &report_due.url),
+        (
+            &was("Lab report").id,
+            was("Lab report").due_at,
+            &was("Lab report").url
+        )
+    );
+    // New ones are added under the assignment's id, with the assignment's link (never the
+    // student's submission page).
+    let ps2 = event("Problem Set 2");
+    assert_eq!(ps2.id, format!("{}/assignment/10", f.source));
+    assert!(
+        ps2.url
+            .as_deref()
+            .is_some_and(|url| url.ends_with("/courses/101/assignments/10"))
+    );
+    let quiz = event("Quiz 1");
+    assert_eq!(quiz.id, format!("{}/assignment/12", f.source));
+    assert_eq!(
+        (quiz.kind, quiz.course_id.as_deref()),
+        (EventKind::QuizDue, Some(seminar.as_str()))
+    );
+    assert!(
+        quiz.url
+            .as_deref()
+            .is_some_and(|url| url.ends_with("/courses/404/assignments/12"))
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.title == "Buy a lab coat")
+            .count(),
+        1
+    );
+    // The discussion is on the planner as before; no assignment event is made up for it.
+    assert!(
+        events
+            .iter()
+            .all(|e| e.id != format!("{}/assignment/14", f.source))
+    );
+
+    // Rule 4 holds in a light run: an assignment or quiz is its name, due date and link.
+    // Nothing else the planner says about it (details, points, submission, feedback) is
+    // stored anywhere, in any table or in the files of the database.
+    for due in [ps1, quiz_a, ps2, quiz] {
+        let extra = (due.starts_at, due.ends_at, due.course_hint.as_deref());
+        assert_eq!(extra, (None, None, None), "{}", due.title);
+        assert!(due.due_at.is_some() && !due.title.is_empty());
+        assert!(!due.url.as_deref().unwrap().contains("submissions"));
+    }
+    for entry in std::fs::read_dir(f.db.parent().unwrap()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let bytes = std::fs::read(&path).unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(!text.contains("SECRET-"), "found in {}", path.display());
+        }
+    }
+
+    // Like any sync, a light run removes what it read completely and no longer finds: an
+    // announcement that left the listing, a syllabus that became empty, a planner note that is
+    // gone. What it didn't read stays: files, pages, links, modules and assignment dates.
+    let events_before = all_events(&store).len();
+    drop(store);
+    f.canvas.reset().await;
+    f.get("/users/self", json!({"id": 1, "name": "Demo Student"}))
+        .await;
+    f.get(
+        "/courses",
+        json!([
+            {"id": 101, "name": "Intro to Demo Studies", "course_code": "DEMO101"},
+            {"id": 202, "name": "Advanced Demo Studies", "course_code": "DEMO202"},
+            {"id": 404, "name": "Demo Seminar", "course_code": "DEMO404"}
+        ]),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/announcements"))
+        .and(query_param("context_codes[]", "course_101"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": 702, "title": "Midterm date", "message": "<p>The midterm is on a Thursday.</p>", "posted_at": "2026-09-29T12:00:00Z"}
+        ])))
+        .with_priority(1)
+        .mount(&f.canvas)
+        .await;
+    f.get("/announcements", json!([])).await;
+    f.get("/planner/items", json!([])).await;
+    let report = sync_with(&f.api_for(true), &f.db, &f.source, &light, &no_progress)
+        .await
+        .unwrap();
+    assert!(report.user_level_read && report.warnings.is_empty());
+    let store = f.store();
+    assert!(
+        !has_material(&f, "/announcement/701"),
+        "it left the listing"
+    );
+    assert!(has_material(&f, "/announcement/702"));
+    assert!(
+        !has_material(&f, "/syllabus/101"),
+        "the syllabus is empty now"
+    );
+    assert_eq!(store.course_syllabus_text(&demo).unwrap(), None);
+    let events = all_events(&store);
+    // The planner's own items went (the note, and the discussion it listed as a to-do).
+    for gone in ["Buy a lab coat", "Week 3 discussion"] {
+        assert!(events.iter().all(|e| e.title != gone), "{gone}");
+    }
+    assert_eq!(events.len(), events_before - 2, "and nothing else");
+    for kept in [
+        "/file/501",
+        "/file/502",
+        "/file/503",
+        "/page/601",
+        "/link/13",
+    ] {
+        assert!(has_material(&f, kept), "{kept}");
+    }
+    assert_eq!(store.list_modules(&demo).unwrap().len(), modules_before);
+    for title in [
+        "Problem Set 1",
+        "Quiz A",
+        "Lab report",
+        "Problem Set 2",
+        "Quiz 1",
+    ] {
+        assert!(events.iter().any(|e| e.title == title), "{title}");
+    }
+    drop(store);
+
+    // The next full sync reads the new course, and takes the dates from the assignments again.
+    f.canvas.reset().await;
+    f.standard().await;
+    for (at, body) in [
+        (
+            "/api/v1/courses",
+            json!([
+                {"id": 101, "name": "Intro to Demo Studies", "course_code": "DEMO101"},
+                {"id": 404, "name": "Demo Seminar", "course_code": "DEMO404"}
+            ]),
+        ),
+        (
+            "/api/v1/courses/404/modules",
+            json!([{"id": 4, "name": "Week 1", "items": [
+                {"id": 41, "type": "ExternalUrl", "external_url": "https://video.example.edu/s1", "title": "Reading"}]}]),
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(at))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .with_priority(1)
+            .mount(&f.canvas)
+            .await;
+    }
+    // (Its tabs and assignments answer 404: nothing there for this student.)
+    let full = f.sync(&f.options(false)).await.unwrap();
+    assert!(
+        full.read_courses.contains(&seminar),
+        "{:?}",
+        full.read_courses
+    );
+    assert_eq!(f.store().list_modules(&seminar).unwrap().len(), 1);
+    let events = all_events(&f.store());
+    let ps1 = events.iter().find(|e| e.title == "Problem Set 1").unwrap();
+    assert!(ps1.due_at.unwrap() < moved - TimeDelta::days(1));
+    assert!(
+        events.iter().all(|e| e.title != "Problem Set 2"),
+        "an assignment Canvas no longer lists goes at a full sync"
+    );
+}
+
+/// A light run that can't read the planner says so (the facade then doesn't count it), and a
+/// run that fails after it stored a new course has already recorded that the course waits.
+#[tokio::test]
+async fn a_user_level_sync_that_misses_deadlines_or_fails_still_records_new_courses() {
+    use pagelamp_core::auto_sync::{LIGHT_SYNC_KEY, LightSync};
+
+    let f = Fixture::new().await;
+    f.standard().await;
+    let full = f.sync(&f.options(false)).await.unwrap();
+    assert!(full.user_level_read);
+    let light = SyncOptions {
+        automatic: true,
+        user_level_only: true,
+        ..f.options(false)
+    };
+    let waiting = |f: &Fixture| -> Vec<String> {
+        let record: LightSync = f
+            .store()
+            .setting_or_absent(LIGHT_SYNC_KEY)
+            .unwrap()
+            .unwrap_or_default();
+        record.structure_pending.into_iter().collect()
+    };
+    assert!(waiting(&f).is_empty());
+    let course = |id: u64| json!({"id": id, "name": format!("Demo {id}"), "course_code": format!("DEMO{id}")});
+    let seminar = format!("{}/course/404", f.source);
+    let lab = format!("{}/course/505", f.source);
+
+    // The planner answers 500: not fatal, but the deadlines weren't read.
+    f.canvas.reset().await;
+    f.get("/users/self", json!({"id": 1, "name": "Demo Student"}))
+        .await;
+    f.get("/courses", json!([course(101), course(202), course(404)]))
+        .await;
+    f.get("/announcements", json!([])).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/planner/items"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&f.canvas)
+        .await;
+    let report = sync_with(&f.api_for(true), &f.db, &f.source, &light, &no_progress)
+        .await
+        .unwrap();
+    assert!(!report.user_level_read);
+    assert!(
+        report.warnings.iter().any(|w| w.contains("Planner items")),
+        "{:?}",
+        report.warnings
+    );
+    assert_eq!(report.new_courses, std::slice::from_ref(&seminar));
+    assert_eq!(waiting(&f), std::slice::from_ref(&seminar));
+
+    // Canvas keeps throttling the planner: the run fails as a whole, after it stored the
+    // course it met. That course is recorded as waiting all the same.
+    f.canvas.reset().await;
+    f.get("/users/self", json!({"id": 1, "name": "Demo Student"}))
+        .await;
+    f.get(
+        "/courses",
+        json!([course(101), course(202), course(404), course(505)]),
+    )
+    .await;
+    f.get("/announcements", json!([])).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/planner/items"))
+        .respond_with(ResponseTemplate::new(429))
+        .mount(&f.canvas)
+        .await;
+    let failed = sync_with(&f.api_for(true), &f.db, &f.source, &light, &no_progress)
+        .await
+        .unwrap_err();
+    assert_eq!(failed.kind, SourceErrorKind::RateLimited);
+    assert_eq!(waiting(&f), [seminar, lab]);
+    let requests = f.canvas.received_requests().await.unwrap();
+    assert!(
+        requests
+            .iter()
+            .all(|r| !r.url.path().starts_with("/api/v1/courses/"))
+    );
+
+    // Every other way of not reading it all says so too: one course's announcements fail,
+    // or the course list or the planner ends in a next link that isn't followed.
+    let elsewhere = "<https://elsewhere.example.org/api/v1/more?page=2>; rel=\"next\"";
+    let list = json!([course(101), course(202)]);
+    for missing in ["announcements", "courses", "planner"] {
+        f.canvas.reset().await;
+        f.get("/users/self", json!({"id": 1, "name": "Demo Student"}))
+            .await;
+        let mut courses = ResponseTemplate::new(200).set_body_json(list.clone());
+        let mut planner = ResponseTemplate::new(200).set_body_json(json!([]));
+        match missing {
+            "announcements" => {
+                Mock::given(method("GET"))
+                    .and(path("/api/v1/announcements"))
+                    .and(query_param("context_codes[]", "course_202"))
+                    .respond_with(ResponseTemplate::new(500))
+                    .with_priority(1)
+                    .mount(&f.canvas)
+                    .await;
+            }
+            "courses" => courses = courses.insert_header("Link", elsewhere),
+            _ => planner = planner.insert_header("Link", elsewhere),
+        }
+        for (at, response) in [
+            ("/api/v1/courses", courses),
+            ("/api/v1/planner/items", planner),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(at))
+                .respond_with(response)
+                .mount(&f.canvas)
+                .await;
+        }
+        f.get("/announcements", json!([])).await;
+        let report = sync_with(&f.api_for(true), &f.db, &f.source, &light, &no_progress)
+            .await
+            .unwrap();
+        assert!(!report.user_level_read, "{missing}");
+        assert!(!report.warnings.is_empty(), "{missing}");
+    }
+}
+
+/// Which courses a full sync read the structure of: a module listing that fails in a way
+/// that may pass leaves the course unread; one the student may not see counts as read.
+#[tokio::test]
+async fn a_full_sync_says_which_courses_it_could_not_read() {
+    let f = Fixture::new().await;
+    one_course(&f, json!([{"id": "home"}, {"id": "modules"}])).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/courses/101/modules"))
+        .respond_with(ResponseTemplate::new(502))
+        .mount(&f.canvas)
+        .await;
+    let report = f.sync(&f.options(false)).await.unwrap();
+    assert_eq!(report.unread_courses, [course101(&f)]);
+    assert!(report.read_courses.is_empty());
+
+    f.canvas.reset().await;
+    one_course(&f, json!([{"id": "home"}])).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/courses/101/modules"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({"status": "unauthorized"})))
+        .mount(&f.canvas)
+        .await;
+    let report = f.sync(&f.options(false)).await.unwrap();
+    assert_eq!(report.read_courses, [course101(&f)]);
+    assert!(report.unread_courses.is_empty());
+}
+
 #[test]
 fn sync_future_is_send() {
     fn assert_send<T: Send>(_: &T) {}
@@ -682,6 +1270,8 @@ fn sync_future_is_send() {
         files_dir: PathBuf::from("/demo"),
         only_courses: Vec::new(),
         extractor: Default::default(),
+        automatic: false,
+        user_level_only: false,
     };
     assert_send(&crate::sync(
         Path::new("/demo/db"),

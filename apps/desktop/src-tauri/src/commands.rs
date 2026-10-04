@@ -753,6 +753,21 @@ pub async fn set_update_prefs(backend: State<'_, Backend>, prefs: UpdatePrefs) -
         .await
 }
 
+// How often PageLamp syncs by itself (the setting only: `startup_tasks` says when one is due).
+
+#[tauri::command]
+pub async fn sync_prefs(backend: State<'_, Backend>) -> CmdResult<pagelamp_app::SyncPrefs> {
+    backend.blocking(|app| app.sync_prefs()).await
+}
+
+#[tauri::command]
+pub async fn set_sync_prefs(
+    backend: State<'_, Backend>,
+    prefs: pagelamp_app::SyncPrefs,
+) -> CmdResult<()> {
+    backend.blocking(move |app| app.set_sync_prefs(prefs)).await
+}
+
 #[tauri::command]
 pub async fn effective_update_channel(backend: State<'_, Backend>) -> CmdResult<UpdateChannel> {
     backend.blocking(|app| app.effective_update_channel()).await

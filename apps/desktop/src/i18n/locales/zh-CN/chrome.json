@@ -7,6 +7,7 @@
   },
   "accessory": {
     "syncingOf": "正在同步 {{done}}/{{total}} · {{source}}",
+    "syncingSource": "正在同步 · {{source}}",
     "details": "同步详情",
     "open": "打开“数据来源与同步”",
     "dismiss": "关闭"

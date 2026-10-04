@@ -16,6 +16,7 @@ use pagelamp_extract::FailureKind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::auto_sync::{self, AutoSync, LightSync};
 use crate::dates::{Tz, course_date, time_zone};
 use crate::lifecycle::{self, LifecycleInput};
 use crate::model::*;
@@ -33,7 +34,8 @@ pub use digest::{DigestCourse, DigestPlan, WeeklyDigest, weekly_digest};
 pub const RECENT_DAYS: u32 = 14;
 /// Window for "upcoming" deadlines in overviews and course summaries.
 pub const UPCOMING_DAYS: u32 = 21;
-/// A source whose last successful sync is older than this is reported as stale.
+/// A source whose last successful sync is older than this is reported as stale, unless the
+/// automatic sync's interval asks for longer (`AutoSync::stale_after`).
 pub const STALE_AFTER_HOURS: i64 = 24;
 
 /// The moment a view is computed for.
@@ -117,8 +119,16 @@ pub struct CourseSummary {
     pub next_deadline: Option<Deadline>,
     /// Label of the source this course came from (e.g. "Quercus", "~/Courses").
     pub source_label: String,
-    /// When that source last synced successfully (data freshness).
+    /// When that source last synced in full (the freshness of the course's modules and
+    /// materials).
     pub last_synced_at: Option<Timestamp>,
+    /// When the source's deadlines and announcements were last read: `last_synced_at`, or a
+    /// later automatic sync that read only those (`auto_sync::LightSync`).
+    pub deadlines_synced_at: Option<Timestamp>,
+    /// An automatic sync found this course, and no full sync has read it yet: it is listed
+    /// with its deadlines and announcements, but its modules and materials are still missing
+    /// (not empty). The next full sync reads them.
+    pub structure_pending: bool,
 }
 
 /// A material as listed in views (no text; use `read_material` for text).
@@ -235,10 +245,15 @@ pub struct CourseOverview {
     /// Announcements posted in the last `RECENT_DAYS` days, newest first (titles + ids only).
     pub recent_announcements: Vec<MaterialView>,
     pub source_label: String,
+    /// When the course's source last synced in full (modules and materials).
     pub last_synced_at: Option<Timestamp>,
     /// Files a "download this course's files" action would fetch: kind `file`, text status
     /// `not_downloaded` and no `download_blocked` reason (all weeks).
     pub downloadable_files: u32,
+    /// When its deadlines and announcements were last read (`CourseSummary`).
+    pub deadlines_synced_at: Option<Timestamp>,
+    /// Its modules and materials haven't been read yet (`CourseSummary`).
+    pub structure_pending: bool,
 }
 
 /// Materials of one teaching week.
@@ -329,9 +344,17 @@ pub struct AiSearchResults {
 pub struct SourceStatus {
     #[serde(flatten)]
     pub source: SourceRecord,
-    /// Never synced, last successful sync older than `STALE_AFTER_HOURS`, or the last sync
-    /// failed.
+    /// Never synced, last successful sync older than the stale threshold (24 hours, or more
+    /// when the automatic sync's interval asks for it), or the last sync failed.
     pub stale: bool,
+    /// When the source's deadlines and announcements were last read: its last full sync
+    /// (`last_synced_at`, which is what `stale` is about), or a later automatic sync that read
+    /// only those.
+    pub deadlines_synced_at: Option<Timestamp>,
+    /// `deadlines_synced_at` is older than the stale threshold too (or there is none). False
+    /// with `stale` true: the modules and materials are old, the deadlines and announcements
+    /// aren't.
+    pub deadlines_stale: bool,
 }
 
 /// Data freshness overview (MCP `sync_status`, desktop status screen).
@@ -343,6 +366,11 @@ pub struct SyncStatus {
     pub last_synced_at: Option<Timestamp>,
     /// True when there are no sources or any source is stale / failing.
     pub stale: bool,
+    /// How often PageLamp syncs by itself while it runs (`Off`: only when the student starts
+    /// a sync).
+    pub auto_sync: AutoSync,
+    /// When an automatic sync last ended with every source it could sync synced.
+    pub last_automatic_sync_at: Option<Timestamp>,
 }
 
 /// Bounds for `read_material`'s `max_chars` (smaller/larger requests are clamped).
@@ -392,15 +420,17 @@ pub fn list_courses(store: &Store, include_hidden: bool, at: AsOf) -> Result<Vec
         let next_deadline = course_deadlines
             .first()
             .map(|event| deadline(event, Some(&course)));
-        let (source_label, last_synced_at) = sources.info(&course.source_id);
+        let synced = sources.info(&course);
         summaries.push(CourseSummary {
             ai_materials,
             timeline,
             lifecycle,
             counts,
             next_deadline,
-            source_label,
-            last_synced_at,
+            source_label: synced.label,
+            last_synced_at: synced.last_synced_at,
+            deadlines_synced_at: synced.deadlines_synced_at,
+            structure_pending: synced.structure_pending,
             course,
         });
     }
@@ -451,7 +481,7 @@ pub fn course_overview(
         .iter()
         .map(|event| deadline(event, Some(&course)))
         .collect();
-    let (source_label, last_synced_at) = SourceIndex::load(store)?.info(&course.source_id);
+    let synced = SourceIndex::load(store)?.info(&course);
     let downloadable_files = data
         .materials
         .iter()
@@ -469,8 +499,10 @@ pub fn course_overview(
         recent_materials: recent(false),
         upcoming_deadlines,
         recent_announcements: recent(true),
-        source_label,
-        last_synced_at,
+        source_label: synced.label,
+        last_synced_at: synced.last_synced_at,
+        deadlines_synced_at: synced.deadlines_synced_at,
+        structure_pending: synced.structure_pending,
         downloadable_files: u32::try_from(downloadable_files).unwrap_or(u32::MAX),
         course,
     })
@@ -783,14 +815,23 @@ pub fn search_for_ai(
 
 /// Sources with freshness verdicts, store counts and the latest successful sync.
 pub fn sync_status(store: &Store, at: AsOf) -> Result<SyncStatus> {
-    let stale_before = at.now - TimeDelta::hours(STALE_AFTER_HOURS);
+    let auto_sync = auto_sync::auto_sync(store)?;
+    let stale_before = at.now - auto_sync.stale_after();
+    let light = auto_sync::light_sync(store)?;
     let sources: Vec<SourceStatus> = store
         .list_sources()?
         .into_iter()
-        .map(|source| SourceStatus {
-            stale: source.last_error.is_some()
-                || source.last_synced_at.is_none_or(|at| at < stale_before),
-            source,
+        .map(|source| {
+            let deadlines_synced_at = light.deadlines_synced_at(&source);
+            // (A time after now tells nothing: the clock was set forward when it was recorded.)
+            let stale_at =
+                |synced| auto_sync::known(synced, at.now).is_none_or(|at| at < stale_before);
+            SourceStatus {
+                stale: source.last_error.is_some() || stale_at(source.last_synced_at),
+                deadlines_stale: stale_at(deadlines_synced_at),
+                deadlines_synced_at,
+                source,
+            }
         })
         .collect();
     let last_synced_at = sources.iter().filter_map(|s| s.source.last_synced_at).max();
@@ -800,6 +841,8 @@ pub fn sync_status(store: &Store, at: AsOf) -> Result<SyncStatus> {
         sources,
         last_synced_at,
         stale,
+        auto_sync,
+        last_automatic_sync_at: auto_sync::attempts(store)?.last_ok_at,
     })
 }
 
@@ -974,24 +1017,47 @@ impl CourseData {
     }
 }
 
-/// Source labels and sync times by source id.
-struct SourceIndex(HashMap<String, SourceRecord>);
+/// Source labels and sync times by source id, with what the light automatic syncs left.
+struct SourceIndex {
+    sources: HashMap<String, SourceRecord>,
+    light: LightSync,
+}
+
+/// A course's source and how fresh the course's data is.
+struct SourceInfo {
+    label: String,
+    last_synced_at: Option<Timestamp>,
+    deadlines_synced_at: Option<Timestamp>,
+    structure_pending: bool,
+}
 
 impl SourceIndex {
     fn load(store: &Store) -> Result<Self> {
-        Ok(SourceIndex(
-            store
+        Ok(SourceIndex {
+            sources: store
                 .list_sources()?
                 .into_iter()
                 .map(|s| (s.id.clone(), s))
                 .collect(),
-        ))
+            light: auto_sync::light_sync(store)?,
+        })
     }
 
-    fn info(&self, source_id: &str) -> (String, Option<Timestamp>) {
-        match self.0.get(source_id) {
-            Some(source) => (source.label.clone(), source.last_synced_at),
-            None => (source_id.to_string(), None),
+    fn info(&self, course: &Course) -> SourceInfo {
+        let structure_pending = self.light.structure_pending.contains(&course.id);
+        match self.sources.get(&course.source_id) {
+            Some(source) => SourceInfo {
+                label: source.label.clone(),
+                last_synced_at: source.last_synced_at,
+                deadlines_synced_at: self.light.deadlines_synced_at(source),
+                structure_pending,
+            },
+            None => SourceInfo {
+                label: course.source_id.clone(),
+                last_synced_at: None,
+                deadlines_synced_at: None,
+                structure_pending,
+            },
         }
     }
 }

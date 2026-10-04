@@ -7,6 +7,7 @@
   },
   "accessory": {
     "syncingOf": "Syncing {{done}} of {{total}} · {{source}}",
+    "syncingSource": "Syncing · {{source}}",
     "details": "Sync details",
     "open": "Open Sources & sync",
     "dismiss": "Dismiss"

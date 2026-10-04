@@ -57,6 +57,9 @@ Pick a situation with `?scenario=` before the `#`:
 | `http://localhost:1420/?scenario=expired#/sources` | Canvas token expired |
 | `http://localhost:1420/?scenario=error#/sources` | a folder source that can't be found |
 | `http://localhost:1420/?scenario=busy#/sources` | another process (the CLI) is syncing |
+| `http://localhost:1420/?scenario=auto-sync-due#/courses` | the sources were last synced 13 hours ago: PageLamp syncs by itself at launch |
+| `http://localhost:1420/?scenario=canvas-old#/sources` | the folder and the feed synced 2 hours ago, Canvas 5 days ago, no error: the sidebar shows the oldest (automatic sync is off here) |
+| `http://localhost:1420/?scenario=light-synced#/sources` | an hour ago a sync with nobody at the app read only Canvas's deadlines and announcements, and found a course whose materials haven't been read yet (automatic sync is off here, so it stays) |
 
 In the mock, a Canvas token containing "expired" is rejected, and a folder path containing
 "missing" is not found. Tests use the same mock (`src/test/render.tsx`).

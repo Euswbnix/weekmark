@@ -59,6 +59,8 @@
     "setTerm": "设置学期开始日期后就能确定周次",
     "synced": "{{source}} · {{when}}同步",
     "notSynced": "{{source}} · 还没有同步过",
+    "syncedAndDeadlines": "{{source}} · {{when}}同步 · {{deadlines}}检查过截止日期",
+    "pending": "{{source}} · 资料尚未读取 · {{when}}检查过截止日期",
     "hidden": "已隐藏",
     "showInList": "在课程列表中显示",
     "shownAgain": "{{course}} 已重新显示在课程列表中"

@@ -59,6 +59,8 @@
     "setTerm": "Set the term start to fix this",
     "synced": "{{source}} · synced {{when}}",
     "notSynced": "{{source}} · not synced yet",
+    "syncedAndDeadlines": "{{source}} · synced {{when}} · deadlines checked {{deadlines}}",
+    "pending": "{{source}} · materials not read yet · deadlines checked {{when}}",
     "hidden": "Hidden",
     "showInList": "Show in course list",
     "shownAgain": "{{course}} is back in your course list"

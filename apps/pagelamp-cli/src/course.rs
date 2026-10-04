@@ -110,13 +110,19 @@ fn line(summary: &CourseSummary) -> String {
         })
         .unwrap_or_default();
     format!(
-        "{:<40} {:<22} ai_policy={:<21} ai_materials={:<18}{}{}",
+        "{:<40} {:<22} ai_policy={:<21} ai_materials={:<18}{}{}{}",
         course.display_name(),
         week_label(&summary.timeline, &summary.lifecycle),
         course.ai_policy.as_str(),
         ai_materials(summary.ai_materials),
         next,
-        if course.hidden { "  [hidden]" } else { "" }
+        if course.hidden { "  [hidden]" } else { "" },
+        // An automatic sync found it; no full sync has read its modules and materials yet.
+        if summary.structure_pending {
+            "  [materials not read yet: sync to read them]"
+        } else {
+            ""
+        }
     )
 }
 
