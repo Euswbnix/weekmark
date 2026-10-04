@@ -58,3 +58,18 @@ pub enum Error {
     #[error("cancelled")]
     Cancelled,
 }
+
+impl Error {
+    /// The database is held by another connection or process (SQLite's busy or locked), after
+    /// the busy timeout: the same call can work a moment later.
+    pub fn is_database_busy(&self) -> bool {
+        matches!(
+            self,
+            Error::Db(rusqlite::Error::SqliteFailure(failure, _))
+                if matches!(
+                    failure.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                )
+        )
+    }
+}

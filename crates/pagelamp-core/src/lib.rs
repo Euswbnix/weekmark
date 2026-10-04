@@ -42,4 +42,6 @@ pub mod timeline;
 pub mod views;
 
 pub use error::{Error, Result};
+/// Removes access parameters from link addresses in text (`pagelamp_extract::scrub`).
+pub use pagelamp_extract::scrub;
 pub use store::Store;

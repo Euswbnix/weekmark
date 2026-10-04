@@ -61,6 +61,7 @@ mod pdf;
 mod pdf_check;
 mod pdf_inflate;
 mod pptx;
+pub mod scrub;
 #[cfg(test)]
 mod test_support;
 mod text;
@@ -243,7 +244,8 @@ fn finish_segments(segments: Vec<Segment>, max_text_bytes: usize) -> Vec<Segment
     let mut finished = Vec::new();
     let mut total_bytes = 0;
     for segment in segments {
-        let text = normalize_whitespace(&segment.text);
+        // No address in extracted text keeps a parameter that gives access to a file.
+        let text = normalize_whitespace(&scrub::scrub_text(&segment.text));
         if text.is_empty() {
             continue;
         }

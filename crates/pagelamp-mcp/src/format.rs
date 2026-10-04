@@ -1,6 +1,7 @@
 //! Output formatting for tool results: `<course_material>` wrappers around every piece of
 //! course text (docs/ARCHITECTURE.md §3 rule 5), output caps, compact JSON.
 
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -76,13 +77,22 @@ pub fn cap_list<T>(mut items: Vec<T>, max: usize) -> (Vec<T>, usize) {
 /// A successful result carrying compact JSON.
 pub fn json_result(value: &impl Serialize) -> CallToolResult {
     match serde_json::to_string(value) {
-        Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+        Ok(json) => text_result(json),
         Err(err) => error_result(format!("internal error: {err}")),
     }
 }
 
+/// A successful result. No link address in it keeps a parameter that gives access to a file:
+/// new text is stored without them, and the server cleans the text an earlier version stored
+/// when it starts. This covers the case where that clean-up couldn't run (the database was
+/// held by another process, or can't be written).
 pub fn text_result(text: impl Into<String>) -> CallToolResult {
-    CallToolResult::success(vec![ContentBlock::text(text.into())])
+    let text = text.into();
+    let text = match pagelamp_core::scrub::scrub_text(&text) {
+        Cow::Owned(clean) => clean,
+        Cow::Borrowed(_) => text,
+    };
+    CallToolResult::success(vec![ContentBlock::text(text)])
 }
 
 /// A tool-level error (`isError: true`) the model can read and explain.

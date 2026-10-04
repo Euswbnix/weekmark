@@ -815,3 +815,172 @@ fn an_unparseable_setting_is_absent_but_a_failed_read_is_an_error() {
         Err(Error::Db(_))
     ));
 }
+
+// ----- access parameters in stored text (`pagelamp_extract::scrub`) ----------------------------
+
+const WITH_VERIFIER: &str =
+    "handout (https://lms.example.edu/courses/101/files/7/download?verifier=Ab12Cd34Zz&wrap=1)";
+
+/// One material with one chunk, a syllabus and a saved plan, each holding an address with an
+/// access parameter, written as an earlier version could have stored them.
+fn store_text_with_access_parameters(conn: &rusqlite::Connection) {
+    conn.execute_batch(&format!(
+        "INSERT INTO materials (id, course_id, kind, title, text_status, updated_at)
+         VALUES ('canvas:demo/page/1', 'canvas:demo/course/101', 'page', 'Week 1', 'ok',
+                 '2026-09-20T00:00:00Z');
+         INSERT INTO chunks (material_id, ord, locator, text)
+         VALUES ('canvas:demo/page/1', 0,
+                 '§ Notes https://lms.example.edu/files/8/preview?verifier=Ab12Cd34Zz',
+                 'zebrafish {WITH_VERIFIER} and more');
+         UPDATE courses SET syllabus_text =
+             'Outline: https://media.example.edu/v?t=5&access_token=Ab12Cd34Zz';
+         INSERT INTO study_plans (created_at, plan_json)
+         VALUES ('2026-09-20T00:00:00Z',
+                 '{{\"horizon_start\":\"2026-09-21\",\"horizon_end\":\"2026-09-27\",\"items\":[],\"notes\":\"read https://lms.example.edu/pages/3?sf_verifier=Ab12Cd34Zz&x=1\"}}');"
+    ))
+    .unwrap();
+}
+
+fn file_holds(path: &Path, what: &str) -> bool {
+    String::from_utf8_lossy(&std::fs::read(path).unwrap()).contains(what)
+}
+
+#[test]
+fn the_backup_made_before_a_migration_holds_no_access_parameter() {
+    let (_dir, path) = temp_db();
+    version_2_db(&path, ("2026-05-01", "2026-12-31"));
+    {
+        let plain = rusqlite::Connection::open(&path).unwrap();
+        store_text_with_access_parameters(&plain);
+    }
+    assert!(file_holds(&path, "Ab12Cd34Zz"));
+
+    // The first open of the new version cleans the text, then copies the database, then
+    // migrates it.
+    let store = Store::open(&path).unwrap();
+    let backup = pagelamp_core::store::database_backup(&path).expect("a backup");
+    assert!(!file_holds(&backup.path, "Ab12Cd34Zz"));
+    assert!(!file_holds(&backup.path, "verifier="));
+    assert!(!file_holds(&backup.path, "access_token="));
+    // The copy is still the old database, with its text otherwise as it was.
+    let copy = rusqlite::Connection::open(&backup.path).unwrap();
+    let version: i64 = copy
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 2);
+    let text: String = copy
+        .query_row("SELECT text FROM chunks", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        text,
+        "zebrafish handout (https://lms.example.edu/courses/101/files/7/download) and more"
+    );
+    // The recorded clean-up still runs afterwards (nothing left to change here).
+    assert_eq!(store.scrubbed_text_version().unwrap(), 0);
+    assert!(store.scrub_stored_text_once().unwrap());
+    assert_eq!(
+        store.scrubbed_text_version().unwrap(),
+        pagelamp_core::scrub::VERSION
+    );
+}
+
+#[test]
+fn stored_text_is_cleaned_once_per_version_of_the_rules() {
+    let (_dir, path) = temp_db();
+    let store = Store::open(&path).unwrap();
+    store.upsert_source(&demo_source("canvas:demo")).unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO courses (id, source_id, external_id, code, name, updated_at)
+             VALUES ('canvas:demo/course/101', 'canvas:demo', '101', 'DEMO101', 'Intro',
+                     '2026-09-20T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+    store_text_with_access_parameters(store.conn());
+    assert_eq!(store.search("Ab12Cd34Zz", None, 5).unwrap().len(), 1);
+
+    assert!(store.scrub_stored_text_once().unwrap());
+    let all: String = store
+        .conn()
+        .query_row(
+            "SELECT (SELECT text || ' | ' || locator FROM chunks) || ' | '
+                 || (SELECT syllabus_text FROM courses) || ' | '
+                 || (SELECT plan_json FROM study_plans)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    for gone in ["Ab12Cd34Zz", "verifier", "access_token"] {
+        assert!(!all.contains(gone), "{gone}: {all}");
+    }
+    assert!(
+        all.contains("§ Notes https://lms.example.edu/files/8/preview |"),
+        "{all}"
+    );
+    assert!(all.contains("https://media.example.edu/v?t=5 |"), "{all}");
+    assert!(
+        all.contains("read https://lms.example.edu/pages/3?x=1"),
+        "{all}"
+    );
+    // The search index followed, and the plan is still a plan.
+    assert!(store.search("Ab12Cd34Zz", None, 5).unwrap().is_empty());
+    assert_eq!(store.search("zebrafish", None, 5).unwrap().len(), 1);
+    let plan = store.latest_study_plan().unwrap().unwrap().plan;
+    assert_eq!(
+        plan.notes.as_deref(),
+        Some("read https://lms.example.edu/pages/3?x=1")
+    );
+
+    // Done once: text written past the rules afterwards isn't looked for again.
+    store
+        .conn()
+        .execute(
+            "UPDATE courses SET syllabus_text = 'https://lms.example.edu/files/9/download?verifier=Later'",
+            [],
+        )
+        .unwrap();
+    assert!(!store.scrub_stored_text_once().unwrap());
+    assert!(
+        store
+            .course_syllabus_text("canvas:demo/course/101")
+            .unwrap()
+            .unwrap()
+            .contains("verifier=Later")
+    );
+}
+
+/// While another connection holds the write lock the clean-up is refused and nothing is
+/// recorded; afterwards it runs.
+#[test]
+fn a_cleanup_that_cannot_get_the_database_is_refused_and_not_recorded() {
+    let (_dir, path) = temp_db();
+    let store = Store::open(&path).unwrap();
+    let other = rusqlite::Connection::open(&path).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let refused = store.scrub_stored_text_once().unwrap_err();
+    assert!(refused.is_database_busy(), "{refused}");
+    other.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(store.scrubbed_text_version().unwrap(), 0);
+    assert!(store.scrub_stored_text_once().unwrap());
+    assert!(!store.scrub_stored_text_once().unwrap());
+}
+
+/// A plan an AI app saves with a copied address is stored, and returned, without the
+/// parameter.
+#[test]
+fn a_saved_plan_keeps_no_access_parameter() {
+    let (_dir, path) = temp_db();
+    let store = Store::open(&path).unwrap();
+    let mut plan = demo_plan();
+    plan.notes = Some(format!("Start with the {WITH_VERIFIER}."));
+    let saved = store.save_study_plan(&plan).unwrap();
+    let clean = "Start with the handout (https://lms.example.edu/courses/101/files/7/download).";
+    assert_eq!(saved.plan.notes.as_deref(), Some(clean));
+    let stored = store.latest_study_plan().unwrap().unwrap();
+    assert_eq!(stored.plan.notes.as_deref(), Some(clean));
+    assert_eq!(stored.plan.items.len(), plan.items.len());
+    drop(store);
+    assert!(!file_holds(&path, "Ab12Cd34Zz"));
+}

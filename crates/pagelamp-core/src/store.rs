@@ -29,6 +29,7 @@
 //! Methods that run several statements (`replace_*`, `prune_*`) also use a SAVEPOINT, so they
 //! are all-or-nothing both when called on their own and inside `in_transaction`.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -213,6 +214,10 @@ const _: () = assert!(MIGRATIONS.len() as i64 == SCHEMA_VERSION);
 /// Settings key of the last migration's backup outcome (`MigrationBackupRecord`).
 pub const LAST_MIGRATION_BACKUP: &str = "last_migration_backup";
 
+/// The `settings` key that records which version of the link-address rules
+/// (`pagelamp_extract::scrub`) the stored text was last cleaned under.
+pub const SCRUBBED_TEXT_KEY: &str = "text.scrubbed";
+
 /// How long a statement waits for another connection's lock before failing with "busy".
 const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 
@@ -371,6 +376,14 @@ impl Store {
         let current = self.checked_user_version()?;
         if current == SCHEMA_VERSION {
             return Ok(());
+        }
+        // Before the backup: text an older version stored may hold link addresses with access
+        // parameters, and the backup must not keep them. Best effort on the old schema (the
+        // recorded clean-up, `scrub_stored_text_once`, still runs after the migration).
+        if current > 0
+            && let Err(err) = self.in_transaction(|store| store.scrub_stored_text())
+        {
+            tracing::warn!("could not clean the stored text before the backup: {err}");
         }
         // Outside the transaction (VACUUM can't run inside one); a copy made while another
         // process migrates is detected and dropped (`write_backup`).
@@ -922,6 +935,88 @@ impl Store {
         expect_changed(changed, "course", course_id)
     }
 
+    /// Remove access parameters from the link addresses in text an earlier version stored
+    /// (`pagelamp_extract::scrub`): the chunks' text and locators (the search index follows
+    /// through its triggers), the courses' syllabus text, and the saved study plans (an AI app
+    /// can have copied an address from an earlier answer into one). Only rows that can hold
+    /// one are read. Returns how many values changed. Call it inside a transaction.
+    ///
+    /// Not touched: a material's own `url`. For a link the instructor put in a module it is
+    /// the address they chose, kept as it is; every other material's link is built from ids.
+    pub fn scrub_stored_text(&self) -> Result<usize> {
+        // (`LIKE` ignores ASCII case; `_` matches any character, which only widens the net.)
+        const MAY_HOLD_ONE: &str = "({column} LIKE '%verifier%' OR {column} LIKE '%access_token%'
+            OR ({column} LIKE '%?%' AND {column} LIKE '%/files/%'))";
+        let mut changed = 0;
+        for (table, key, column) in [
+            ("chunks", "id", "text"),
+            ("chunks", "id", "locator"),
+            ("courses", "rowid", "syllabus_text"),
+            ("study_plans", "id", "plan_json"),
+        ] {
+            let filter = MAY_HOLD_ONE.replace("{column}", column);
+            let rows: Vec<(i64, String)> = {
+                let mut statement = self.conn.prepare(&format!(
+                    "SELECT {key}, {column} FROM {table} WHERE {filter}"
+                ))?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            let mut update = self.conn.prepare(&format!(
+                "UPDATE {table} SET {column} = ?2 WHERE {key} = ?1"
+            ))?;
+            for (id, text) in rows {
+                if let Cow::Owned(clean) = pagelamp_extract::scrub::scrub_text(&text) {
+                    update.execute(params![id, clean])?;
+                    changed += 1;
+                }
+            }
+        }
+        Ok(changed)
+    }
+
+    /// Which version of the rules the stored text was last cleaned under (0: never).
+    pub fn scrubbed_text_version(&self) -> Result<u32> {
+        Ok(self.setting_or_absent(SCRUBBED_TEXT_KEY)?.unwrap_or(0))
+    }
+
+    /// Clean the stored text once per version of the rules (`scrub_stored_text`), and record
+    /// it. New text is cleaned as it is stored; this is for what an earlier version stored. An
+    /// app, the CLI and the MCP server call it when they start.
+    ///
+    /// One transaction: the record is read again under the write lock, so a second process
+    /// finds the work done and scans nothing. Returns whether this call did the clean-up.
+    ///
+    /// What this guarantees: once it has run, no stored text holds an access parameter as
+    /// long as every writer is this version or later. An older PageLamp that writes afterwards
+    /// (two installs on one data folder) can store one again; what is given out is cleaned
+    /// either way.
+    pub fn scrub_stored_text_once(&self) -> Result<bool> {
+        if self.scrubbed_text_version()? >= pagelamp_extract::scrub::VERSION {
+            return Ok(false);
+        }
+        self.in_transaction(|store| {
+            if store.scrubbed_text_version()? >= pagelamp_extract::scrub::VERSION {
+                return Ok(false);
+            }
+            let changed = store.scrub_stored_text()?;
+            if changed > 0 {
+                tracing::info!("removed access parameters from {changed} stored texts");
+            }
+            store.set_setting(SCRUBBED_TEXT_KEY, &pagelamp_extract::scrub::VERSION)?;
+            Ok(true)
+        })
+    }
+
+    /// The text of one chunk (`None`: no such chunk).
+    pub fn chunk_text(&self, material_id: &str, ord: u32) -> Result<Option<String>> {
+        self.query_opt(
+            "SELECT text FROM chunks WHERE material_id = ?1 AND ord = ?2",
+            params![material_id, ord],
+            |row| row.get(0),
+        )
+    }
+
     /// `None` when the course has no syllabus text (or does not exist).
     pub fn course_syllabus_text(&self, course_id: &str) -> Result<Option<String>> {
         let text: Option<Option<String>> = self.query_opt(
@@ -1445,7 +1540,17 @@ impl Store {
     /// `MAX_STORED_STUDY_PLANS` plans are kept (older ones are deleted in the same step).
     pub fn save_study_plan(&self, plan: &StudyPlan) -> Result<StoredStudyPlan> {
         validate_study_plan(plan)?;
+        // An AI app can copy a link from an earlier answer into a plan: no address in a stored
+        // plan keeps a parameter that gives access to a file. What is returned is what is
+        // stored.
         let plan_json = serde_json::to_string(plan)?;
+        let (plan_json, plan) = match pagelamp_extract::scrub::scrub_text(&plan_json) {
+            Cow::Owned(clean) => {
+                let plan: StudyPlan = serde_json::from_str(&clean)?;
+                (clean, plan)
+            }
+            Cow::Borrowed(_) => (plan_json, plan.clone()),
+        };
         // The per-field limits count characters, but JSON can make text up to 6× longer
         // (a control character becomes "\u0001"), so the total size is checked as well.
         if plan_json.len() > MAX_PLAN_JSON_BYTES {
@@ -1472,7 +1577,7 @@ impl Store {
         Ok(StoredStudyPlan {
             id,
             created_at,
-            plan: plan.clone(),
+            plan,
         })
     }
 

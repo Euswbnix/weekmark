@@ -905,3 +905,59 @@ fn courses_are_grouped_by_lifecycle_with_timeline_and_keep() {
     );
     assert!(!conflict.status.success());
 }
+
+/// Text an earlier version stored may hold a link address with a parameter that gives access
+/// to a file. Any command cleans the stored text first, so `search` never prints one: not
+/// when the snippet starts after the address's "?", and not for a search for the value.
+#[test]
+fn search_never_prints_an_access_parameter() {
+    use pagelamp_core::store::Store;
+
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let courses = temp.path().join("Courses");
+    demo_courses(&courses);
+    ok(&pagelamp(
+        &home,
+        &["folder", "add", courses.to_str().unwrap()],
+    ));
+    ok(&pagelamp(&home, &["sync"]));
+    {
+        let store = Store::open(&pagelamp_core::paths::db_path_in(&home)).unwrap();
+        store
+            .conn()
+            .execute(
+                "UPDATE chunks SET text = text || ' zebrafish handout \
+                 (https://lms.example.edu/courses/1/files/7/download?verifier=Ab12Cd34Zz&wrap=1) \
+                 one two three four five kiwi lemon and the video \
+                 https://media.example.edu/v?t=5&access_token=Ij90Kl12Xx one two three four five \
+                 olive papaya'",
+                [],
+            )
+            .unwrap();
+        store.remove_setting("text.scrubbed").unwrap();
+    }
+    for args in [
+        &["search", "zebrafish"][..],
+        &["--json", "search", "zebrafish"],
+        &["search", "kiwi"],
+        &["search", "lemon"],
+        &["search", "olive"],
+        &["search", "papaya"],
+        &["search", "verifier"],
+        &["--json", "search", "Ab12Cd34Zz"],
+        &["search", "Ij90Kl12Xx"],
+    ] {
+        let out = pagelamp(&home, args);
+        // Without the match marks, which would hide a value they cut.
+        let text: String = format!("{}{}", ok(&out), String::from_utf8_lossy(&out.stderr))
+            .chars()
+            .filter(|c| !matches!(c, '«' | '»'))
+            .collect();
+        for gone in ["Ab12Cd34Zz", "Ij90Kl12Xx", "verifier=", "access_token="] {
+            assert!(!text.contains(gone), "{gone} in {args:?}: {text}");
+        }
+    }
+    assert!(ok(&pagelamp(&home, &["search", "zebrafish"])).contains("handout"));
+    assert!(ok(&pagelamp(&home, &["search", "kiwi"])).contains("lemon"));
+}

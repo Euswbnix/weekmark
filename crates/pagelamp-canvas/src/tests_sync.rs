@@ -669,6 +669,116 @@ async fn every_request_is_an_allow_listed_get() {
     }
 }
 
+/// A link address in Canvas HTML can carry a parameter that opens the file for whoever has
+/// the address. None is stored: not in the text, the search index, the syllabus or a link.
+#[tokio::test]
+async fn link_addresses_are_stored_without_access_parameters() {
+    let f = Fixture::new().await;
+    let base = f.canvas.uri();
+    f.get("/users/self", json!({"id": 1, "name": "Demo Student"}))
+        .await;
+    let syllabus = format!(
+        "<p>Outline: <a href=\"{base}/courses/101/files/500/download?verifier=SECRET-SYLLABUS&amp;wrap=1\">PDF</a></p>"
+    );
+    f.get(
+        "/courses",
+        json!([{"id": 101, "name": "Intro to Demo Studies", "course_code": "DEMO101",
+                "syllabus_body": syllabus}]),
+    )
+    .await;
+    f.get(
+        "/courses/101/tabs",
+        json!([{"id": "home"}, {"id": "files"}, {"id": "pages"}]),
+    )
+    .await;
+    f.get("/courses/101/modules", json!([])).await;
+    f.get("/courses/101/assignments", json!([])).await;
+    // The file list's own download address carries one too.
+    let mut listed = f.file(501, "slides.txt", 20);
+    listed["url"] = json!(format!(
+        "{base}/files/501/download?download_frd=1&verifier=SECRET-LISTING"
+    ));
+    f.get("/courses/101/files", json!([listed])).await;
+    let page = json!({"page_id": 601, "url": "week-1", "title": "Week 1", "updated_at": "2026-09-08T10:00:00Z"});
+    f.get("/courses/101/pages", json!([page])).await;
+    let body = format!(
+        "<h1>Week 1</h1><h2>Notes at {base}/files/504/preview?verifier=SECRET-HEADING</h2>\
+         <p>Slides: <a href=\"{base}/courses/101/files/501/download?verifier=SECRET-PAGE&amp;wrap=1\">photosynthesis slides</a>, \
+         the <a href=\"https://media.example.edu/watch?access_token=SECRET-TOKEN&amp;t=30\">recording</a>, \
+         and a pasted address: {base}/files/502/preview?sf_verifier=SECRET-PASTED</p>"
+    );
+    f.get(
+        "/courses/101/pages/week-1",
+        json!({"page_id": 601, "url": "week-1", "title": "Week 1", "updated_at": "2026-09-08T10:00:00Z",
+               "body": body}),
+    )
+    .await;
+    let message = format!(
+        "<p>The <a href=\"{base}/courses/101/files/503/preview?verifier=SECRET-NEWS\">handout</a> is up.</p>"
+    );
+    f.get(
+        "/announcements",
+        json!([{"id": 701, "title": "Handout", "message": message, "posted_at": "2026-09-22T12:00:00Z"}]),
+    )
+    .await;
+    f.get("/planner/items", json!([])).await;
+
+    let report = f.sync(&f.options(false)).await.unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+
+    let found_nowhere = |f: &Fixture, what: &str| {
+        for entry in std::fs::read_dir(f.db.parent().unwrap()).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                let bytes = std::fs::read(&path).unwrap();
+                let text = String::from_utf8_lossy(&bytes);
+                assert!(!text.contains(what), "{what} found in {}", path.display());
+            }
+        }
+    };
+    found_nowhere(&f, "SECRET-");
+    found_nowhere(&f, "verifier=");
+    found_nowhere(&f, "access_token=");
+
+    // The text keeps the addresses, without the parameters; other parameters stay.
+    let store = f.store();
+    let hits = store.search("photosynthesis", None, 5).unwrap();
+    assert_eq!(hits.len(), 1);
+    let text: String = store
+        .conn()
+        .query_row(
+            "SELECT group_concat(text, ' ') FROM chunks WHERE material_id LIKE '%/page/601'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        text.contains(&format!(
+            "photosynthesis slides ({base}/courses/101/files/501/download)"
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains("recording (https://media.example.edu/watch?t=30)"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("{base}/files/502/preview")),
+        "{text}"
+    );
+    // A heading with an address in it becomes a locator: cleaned too.
+    assert_eq!(
+        hits[0].locator.as_deref(),
+        Some(format!("§ Notes at {base}/files/504/preview").as_str())
+    );
+    let demo = course101(&f);
+    let syllabus = store.course_syllabus_text(&demo).unwrap().unwrap();
+    assert!(
+        syllabus.contains(&format!("PDF ({base}/courses/101/files/500/download)")),
+        "{syllabus}"
+    );
+}
+
 #[test]
 fn sync_future_is_send() {
     fn assert_send<T: Send>(_: &T) {}

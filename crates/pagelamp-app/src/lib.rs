@@ -469,6 +469,32 @@ impl std::fmt::Debug for App {
     }
 }
 
+/// Link addresses in text an earlier version stored may carry a parameter that gives access to
+/// a file. The stored text is cleaned once per version of the rules, here and when the MCP
+/// server starts (`Store::scrub_stored_text_once`, which says what that guarantees); new text
+/// is cleaned as it is stored.
+///
+/// When the clean-up can't be done, the data isn't opened: this process would otherwise show
+/// or print what must not be shown. The usual cause is another PageLamp process that holds
+/// the database; the error says so in words a student can act on.
+fn scrub_text_stored_earlier(store: &Store) -> Result<()> {
+    match store.scrub_stored_text_once() {
+        Ok(_) => Ok(()),
+        Err(err) if err.is_database_busy() => {
+            let product = pagelamp_core::brand::PRODUCT_NAME;
+            Err(AppError::new(
+                AppErrorKind::Busy,
+                format!(
+                    "{product} couldn't finish updating its stored text because another \
+                     {product} window or command is using the data. Wait for it to finish, or \
+                     close it, and try again."
+                ),
+            ))
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 impl App {
     /// Default data dir (`PAGELAMP_HOME` respected). Creates it and migrates the DB.
     pub fn open() -> Result<App> {
@@ -498,6 +524,7 @@ impl App {
         let store = Store::open(&db_path)?;
         let used_before_at_open =
             !store.list_sources()?.is_empty() || store.last_migration_backup()?.is_some();
+        scrub_text_stored_earlier(&store)?;
         drop(store);
         let app = App {
             data_dir,

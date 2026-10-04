@@ -43,6 +43,10 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 ### Fixed
 - A file that became locked or was moved, and hasn't been read again, no longer shows its old
   text anywhere: not in search, not to your AI app, not in PageLamp's own AI features.
+- Link addresses in Canvas pages, announcements and syllabuses can carry access parameters.
+  PageLamp now removes them from every address in the text it stores, whatever the text came
+  from, and before it gives text out (search, your AI app). Text stored earlier is cleaned the
+  next time PageLamp, the `pagelamp` command or your AI app's connection opens your data.
 - A course that PageLamp lists as ended, inactive or not started no longer reports a current
   week. Without usable dates, the week number of the last material posted (even years ago)
   was shown as the current week in the app, `pagelamp courses` and to your AI app

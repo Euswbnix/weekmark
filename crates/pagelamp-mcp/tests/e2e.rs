@@ -1019,3 +1019,83 @@ async fn mcp_course_info_uses_resolved_dates() {
     assert_eq!(week["phase"], "teaching");
     assert_eq!(week["course"]["term_dates_source"], "lms_term");
 }
+
+/// Text an earlier version stored can hold a link address with a parameter that gives access
+/// to a file. This is the worst case: the clean-up at the server's start didn't happen (the
+/// test serves without it), so the stored text still holds the parameters. Nothing the server
+/// gives out carries one, also not a search snippet that starts after the "?", where nothing
+/// in the snippet shows what the value is.
+#[tokio::test]
+async fn no_tool_gives_out_an_access_parameter() {
+    // Values without a word break, each followed by words a search can hit: the sixth and
+    // seventh word after the value make the snippet start past the address.
+    const VALUES: [&str; 3] = ["Ab12Cd34Zz", "Ef56Gh78Yy", "Ij90Kl12Xx"];
+    let temp = tempfile::tempdir().unwrap();
+    let db = fixture(temp.path());
+    set(&db, |s| {
+        s.conn()
+            .execute(
+                "UPDATE chunks SET text = text || ' — zebrafish handout \
+                 (https://lms.example.edu/courses/101/files/7/download?verifier=Ab12Cd34Zz&wrap=1) \
+                 one two three four five kiwi lemon. Page \
+                 https://lms.example.edu/courses/101/pages/9?sf_verifier=Ef56Gh78Yy&x=1 one two \
+                 three four five mango nectar. Video \
+                 https://media.example.edu/v?t=5&access_token=Ij90Kl12Xx one two three four five \
+                 olive papaya \"today\"'",
+                [],
+            )
+            .unwrap();
+    });
+    let client = connect(db.clone()).await;
+    let search = |query: &'static str| ("search_materials", json!({"query": query}));
+    let mut outputs = Vec::new();
+    for (tool, args) in [
+        ("read_material", json!({"material_id": mid("week3-slides")})),
+        search("zebrafish"),
+        // After each address.
+        search("kiwi"),
+        search("lemon"),
+        search("mango"),
+        search("nectar"),
+        search("olive"),
+        search("papaya"),
+        // For the parameter itself, and for a value: the match marks cut the address.
+        search("verifier"),
+        search("access_token"),
+        search("Ab12Cd34Zz"),
+        search("Ij90Kl12Xx"),
+        ("get_announcements", json!({"course": "DEMO101"})),
+        ("course_overview", json!({"course": "DEMO101"})),
+        ("week_materials", json!({"course": "DEMO101"})),
+    ] {
+        let result = call(&client, tool, args.clone()).await;
+        assert!(!is_error(&result), "{tool}: {}", text_of(&result));
+        // Without the match marks, which would hide a value they cut, and without the first
+        // line of a search, which repeats the query the client sent.
+        let text = text_of(&result);
+        let text = match tool {
+            "search_materials" => text.split_once('\n').map_or("", |(_, rest)| rest),
+            _ => text.as_str(),
+        };
+        let text: String = text.chars().filter(|c| !matches!(c, '«' | '»')).collect();
+        outputs.push((format!("{tool} {args}"), text));
+    }
+    for (call, text) in &outputs {
+        for gone in VALUES.iter().chain(&["verifier=", "access_token="]) {
+            assert!(!text.contains(gone), "{gone} in {call}: {text}");
+        }
+    }
+    // The addresses themselves stay, with their other parameters.
+    let read = &outputs[0].1;
+    for kept in [
+        "zebrafish handout (https://lms.example.edu/courses/101/files/7/download) one two",
+        "https://lms.example.edu/courses/101/pages/9?x=1 one two",
+        "https://media.example.edu/v?t=5 one two",
+    ] {
+        assert!(read.contains(kept), "{kept}: {read}");
+    }
+    // A search still finds the chunk, and says where; its snippet is the start of the
+    // cleaned text.
+    assert!(outputs[2].1.contains("week3-slides"), "{}", outputs[2].1);
+    client.cancel().await.unwrap();
+}

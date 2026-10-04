@@ -19,6 +19,7 @@
 //! the file itself (`TextErrorKind::is_hard`) is recorded with `failure_fingerprint` and not
 //! tried again while its content, the worker protocol and the app version stay the same.
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
@@ -478,7 +479,20 @@ fn save_extraction(
         }
     };
     match extracted {
-        Ok(segments) => {
+        Ok(mut segments) => {
+            // Whatever produced the text (a file, the worker, plain text): no address in it,
+            // or in a heading that became a locator, keeps a parameter that gives access to
+            // a file.
+            for segment in &mut segments {
+                if let Cow::Owned(clean) = pagelamp_extract::scrub::scrub_text(&segment.text) {
+                    segment.text = clean;
+                }
+                if let Some(locator) = &mut segment.locator
+                    && let Cow::Owned(clean) = pagelamp_extract::scrub::scrub_text(locator)
+                {
+                    *locator = clean;
+                }
+            }
             let chunks = to_chunks(material_id, &segments);
             if chunks.is_empty() {
                 write_text_state(
